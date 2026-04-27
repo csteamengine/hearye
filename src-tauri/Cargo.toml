@@ -1,0 +1,36 @@
+[package]
+name = "hearye"
+version = "0.1.0"
+description = "Free dictation app — Whisper + optional Claude cleanup, paste anywhere"
+authors = ["Charlie Steenhagen"]
+edition = "2021"
+
+[lib]
+name = "hearye_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-store = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
+cpal = "0.15"
+hound = "3.5"
+parking_lot = "0.12"
+anyhow = "1"
+log = "0.4"
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.24"
+core-foundation = "0.10"
+objc2 = "0.5"
+objc2-foundation = { version = "0.2", features = ["NSString"] }
+whisper-rs = { version = "0.14", features = ["metal"] }

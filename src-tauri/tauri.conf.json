@@ -1,0 +1,64 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "HearYe",
+  "version": "0.1.0",
+  "identifier": "com.charlie.hearye",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../build"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "overlay",
+        "url": "/overlay",
+        "title": "HearYe",
+        "width": 300,
+        "height": 64,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focus": false,
+        "visible": false,
+        "shadow": false,
+        "acceptFirstMouse": false
+      },
+      {
+        "label": "settings",
+        "url": "/",
+        "title": "HearYe — Settings",
+        "width": 560,
+        "height": 720,
+        "resizable": true,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "resources": ["models/ggml-base.en.bin"],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "entitlements": null,
+      "exceptionDomain": "",
+      "providerShortName": null
+    },
+    "category": "Productivity",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
