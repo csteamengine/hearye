@@ -10,8 +10,35 @@ permissions:
   contents: write
 
 jobs:
+  create-release:
+    name: create draft release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create draft release
+        id: create
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.ref.replace("refs/tags/", "");
+            const release = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `HearYe ${tag}`,
+              draft: true,
+              prerelease: false,
+              generate_release_notes: true,
+            });
+            return release.data.id;
+          result-encoding: string
+
   build:
     name: build (${{ matrix.target }})
+    needs: create-release
     runs-on: macos-14
     strategy:
       fail-fast: false
@@ -46,7 +73,13 @@ jobs:
       - name: Install JS deps
         run: pnpm install --frozen-lockfile
 
-      - name: Download Whisper model
+      - name: Cache Whisper model
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/models/ggml-base.en.bin
+          key: whisper-ggml-base.en
+
+      - name: Download Whisper model (if not cached)
         run: ./scripts/download-model.sh
 
       - uses: tauri-apps/tauri-action@v0
@@ -63,8 +96,21 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "HearYe ${{ github.ref_name }}"
-          releaseDraft: false
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+
+  publish-release:
+    name: publish release
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Un-draft release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.create-release.outputs.release_id }},
+              draft: false,
+            });
