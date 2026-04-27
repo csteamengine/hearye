@@ -6,8 +6,7 @@
   import { load, type Store } from "@tauri-apps/plugin-store";
 
   const STORE_FILE = "settings.json";
-  // TODO: set to the GitHub repo once published, e.g. "csteen1005/hearye".
-  const RELEASE_REPO = "";
+  const RELEASE_REPO = "csteamengine/hearye";
 
   let store: Store | null = null;
   let engine = $state<"native" | "groq">("native");
