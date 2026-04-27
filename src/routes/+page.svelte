@@ -27,6 +27,7 @@
   let updateStatus = $state("");
   let updateUrl = $state("");
   let checkingUpdate = $state(false);
+  let recording = $state<null | "toggle" | "ptt">(null);
 
   onMount(async () => {
     store = await load(STORE_FILE, { defaults: {}, autoSave: false });
@@ -87,6 +88,86 @@
 
   async function refreshDevices() {
     devices = await invoke<string[]>("list_input_devices");
+  }
+
+  function eventToShortcut(e: KeyboardEvent): string | null {
+    // Bare modifier presses don't form a shortcut by themselves.
+    const modifierOnly = ["Meta", "Control", "Alt", "Shift"].includes(e.key);
+    const code = e.code;
+
+    let key = "";
+    if (/^Key[A-Z]$/.test(code)) key = code.slice(3);
+    else if (/^Digit[0-9]$/.test(code)) key = code.slice(5);
+    else if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) key = code;
+    else if (code === "Space") key = "Space";
+    else if (code === "Tab") key = "Tab";
+    else if (code === "Enter") key = "Enter";
+    else if (code === "Backspace") key = "Backspace";
+    else if (code === "Delete") key = "Delete";
+    else if (code === "ArrowUp") key = "Up";
+    else if (code === "ArrowDown") key = "Down";
+    else if (code === "ArrowLeft") key = "Left";
+    else if (code === "ArrowRight") key = "Right";
+    else if (code === "Minus") key = "-";
+    else if (code === "Equal") key = "=";
+    else if (code === "BracketLeft") key = "[";
+    else if (code === "BracketRight") key = "]";
+    else if (code === "Semicolon") key = ";";
+    else if (code === "Quote") key = "'";
+    else if (code === "Comma") key = ",";
+    else if (code === "Period") key = ".";
+    else if (code === "Slash") key = "/";
+    else if (code === "Backslash") key = "\\";
+    else if (code === "Backquote") key = "`";
+
+    if (!key || modifierOnly) return null;
+
+    const parts: string[] = [];
+    if (e.metaKey) parts.push("Cmd");
+    if (e.ctrlKey) parts.push("Ctrl");
+    if (e.altKey) parts.push("Alt");
+    if (e.shiftKey) parts.push("Shift");
+    parts.push(key);
+    return parts.join("+");
+  }
+
+  async function startRecord(which: "toggle" | "ptt", e: Event) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (recording === which) {
+      // toggle off — restore the saved value
+      recording = null;
+      await invoke("reload_hotkeys").catch(() => {});
+      return;
+    }
+    // Suspend the global shortcut listener so the user can re-press an existing
+    // hotkey without it firing the recording action.
+    await invoke("suspend_hotkeys").catch(() => {});
+    if (which === "toggle") toggleHotkey = "";
+    else pttHotkey = "";
+    recording = which;
+  }
+
+  async function endRecord() {
+    recording = null;
+    // Re-register whatever is currently saved (or whatever the user just typed).
+    await invoke("reload_hotkeys").catch(() => {});
+  }
+
+  async function onRecordKeydown(e: KeyboardEvent) {
+    if (!recording) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === "Escape") {
+      // Cancel — leave the field as-is (empty if user just clicked record).
+      await endRecord();
+      return;
+    }
+    const shortcut = eventToShortcut(e);
+    if (!shortcut) return; // wait for the non-modifier key
+    if (recording === "toggle") toggleHotkey = shortcut;
+    else pttHotkey = shortcut;
+    await endRecord();
   }
 
   async function clearKey(name: "groq_api_key" | "anthropic_api_key") {
@@ -189,15 +270,45 @@
     <h2>Hotkeys</h2>
     <label>
       Toggle (press to start, again to stop)
-      <input type="text" bind:value={toggleHotkey} />
+      <div class="hotkey-input" class:recording={recording === "toggle"}>
+        <input
+          type="text"
+          readonly
+          value={recording === "toggle" ? "Press keys… (Esc to cancel)" : toggleHotkey || "Not set"}
+          class:placeholder={!toggleHotkey && recording !== "toggle"}
+        />
+        <button
+          type="button"
+          class="hotkey-action"
+          aria-label={recording === "toggle" ? "Cancel recording" : "Re-record hotkey"}
+          onclick={(e) => startRecord("toggle", e)}
+        >
+          {recording === "toggle" ? "✕" : "↻"}
+        </button>
+      </div>
     </label>
     <label>
       Push-to-talk (hold to record, release to send)
-      <input type="text" bind:value={pttHotkey} />
+      <div class="hotkey-input" class:recording={recording === "ptt"}>
+        <input
+          type="text"
+          readonly
+          value={recording === "ptt" ? "Press keys… (Esc to cancel)" : pttHotkey || "Not set"}
+          class:placeholder={!pttHotkey && recording !== "ptt"}
+        />
+        <button
+          type="button"
+          class="hotkey-action"
+          aria-label={recording === "ptt" ? "Cancel recording" : "Re-record hotkey"}
+          onclick={(e) => startRecord("ptt", e)}
+        >
+          {recording === "ptt" ? "✕" : "↻"}
+        </button>
+      </div>
     </label>
     <p class="hint">
-      Tauri shortcut syntax — e.g. <code>Cmd+Shift+Space</code>, <code>F18</code>. Press
-      <code>Esc</code> while recording to cancel.
+      Click <code>↻</code> on a field, then press your key combo. Press <code>Esc</code> while the
+      app is recording audio to cancel that recording.
     </p>
     {#if hotkeyError}<p class="err">{hotkeyError}</p>{/if}
   </section>
@@ -254,6 +365,8 @@
     <span class="ok">{savedNotice}</span>
   </div>
 </main>
+
+<svelte:window onkeydown={onRecordKeydown} />
 
 <style>
   :global(body) {
@@ -336,6 +449,44 @@
   }
   button.ghost:hover {
     background: #1a1c20;
+  }
+  .hotkey-input {
+    position: relative;
+    margin-top: 4px;
+  }
+  .hotkey-input input {
+    margin-top: 0;
+    padding-right: 36px;
+    cursor: default;
+  }
+  .hotkey-input input.placeholder {
+    color: #6b7280;
+  }
+  .hotkey-input.recording input {
+    border-color: #f87171;
+    color: #f87171;
+  }
+  .hotkey-action {
+    position: absolute;
+    top: 0;
+    right: 0;
+    height: 100%;
+    width: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: #9aa0a6;
+    font-size: 14px;
+    padding: 0;
+    cursor: pointer;
+  }
+  .hotkey-action:hover {
+    color: #e8e8ec;
+  }
+  .hotkey-input.recording .hotkey-action {
+    color: #f87171;
   }
   input[type="text"],
   input[type="password"] {

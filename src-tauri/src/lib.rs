@@ -1,6 +1,8 @@
 mod audio;
 mod enhance;
 mod keychain;
+#[cfg(target_os = "macos")]
+mod media;
 mod native_stt;
 #[cfg(target_os = "macos")]
 mod paste;
@@ -60,6 +62,9 @@ fn begin_session(app: &AppHandle, state: Arc<AppState>) {
     let cfg = settings::Settings::load(app);
     let recording = audio::start(app.clone(), cfg.input_device.clone());
 
+    #[cfg(target_os = "macos")]
+    media::pause();
+
     *state.session.lock() = Some(Session {
         recording,
         #[cfg(target_os = "macos")]
@@ -94,6 +99,8 @@ async fn finish_session(app: AppHandle, state: Arc<AppState>) -> Result<()> {
         Some(s) => s,
         None => return Ok(()),
     };
+    #[cfg(target_os = "macos")]
+    media::play();
     let _ = app.emit("hearye://state", "transcribing");
     let wav = session.recording.into_wav_16k_mono()?;
     if wav.len() < 2_000 {
@@ -135,7 +142,13 @@ async fn finish_session(app: AppHandle, state: Arc<AppState>) -> Result<()> {
 }
 
 fn cancel_all(app: &AppHandle, state: Arc<AppState>) {
-    let _ = state.session.lock().take();
+    let had_session = state.session.lock().take().is_some();
+    #[cfg(target_os = "macos")]
+    if had_session {
+        media::play();
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = had_session;
     if let Some(h) = state.pipeline.lock().take() {
         h.abort();
     }
@@ -286,6 +299,12 @@ fn reload_hotkeys(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn suspend_hotkeys(app: AppHandle) -> Result<(), String> {
+    let _ = app.global_shortcut().unregister_all();
+    Ok(())
+}
+
+#[tauri::command]
 fn has_api_key(name: String) -> Result<bool, String> {
     if !keychain::is_known(&name) {
         return Err(format!("unknown key: {name}"));
@@ -317,6 +336,7 @@ pub fn run() {
             reload_hotkeys,
             list_input_devices,
             open_settings,
+            suspend_hotkeys,
             has_api_key,
             set_api_key
         ])

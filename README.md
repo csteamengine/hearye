@@ -41,6 +41,16 @@ For a fully bundled `.app` (production), `pnpm tauri build` works correctly beca
 
 After any Rust source change, Ctrl-C and re-run `./scripts/dev.sh`. The Vite dev server stays running in the background.
 
+### One-time: stable dev code-signing identity
+
+The macOS Keychain ACLs items by **code signature**, not bundle ID. Without a stable signing identity, every dev rebuild produces a fresh ad-hoc signature, so Keychain treats each build as a new app and re-prompts even after you click "Always Allow." Fix:
+
+1. Open **Keychain Access** → **Certificate Assistant** → **Create a Certificate…**
+2. Name: `HearYe Dev`  •  Identity Type: **Self Signed Root**  •  Certificate Type: **Code Signing**
+3. Click Create. (No Apple Developer account needed; this cert is local-only.)
+
+`scripts/sign-dev-binary.sh` auto-detects the cert by name and uses it. Override with `HEARYE_DEV_IDENTITY=...` if you want a different name. The first build after creating the cert will still prompt once — click "Always Allow" and you're done.
+
 ## Permissions / Info.plist
 
 `src-tauri/Info.plist` declares the usage strings macOS needs for the permission prompts:
