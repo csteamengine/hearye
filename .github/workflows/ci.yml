@@ -1,0 +1,62 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+          - target: x86_64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Whisper model
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/models/ggml-base.en.bin
+          key: whisper-ggml-base.en
+
+      - name: Download Whisper model (if not cached)
+        run: ./scripts/download-model.sh
+
+      - name: Frontend type check
+        run: pnpm check
+
+      - name: Build app
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles app
