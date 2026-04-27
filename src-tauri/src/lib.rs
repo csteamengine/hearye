@@ -63,12 +63,14 @@ fn begin_session(app: &AppHandle, state: Arc<AppState>) {
     let recording = audio::start(app.clone(), cfg.input_device.clone());
 
     #[cfg(target_os = "macos")]
-    media::pause();
+    let paused_media = media::pause_if_playing();
 
     *state.session.lock() = Some(Session {
         recording,
         #[cfg(target_os = "macos")]
         focus,
+        #[cfg(target_os = "macos")]
+        paused_media,
     });
     show_overlay(app);
     register_escape(app);
@@ -100,7 +102,7 @@ async fn finish_session(app: AppHandle, state: Arc<AppState>) -> Result<()> {
         None => return Ok(()),
     };
     #[cfg(target_os = "macos")]
-    media::play();
+    media::resume_if_paused(session.paused_media);
     let _ = app.emit("hearye://state", "transcribing");
     let wav = session.recording.into_wav_16k_mono()?;
     if wav.len() < 2_000 {
@@ -142,13 +144,12 @@ async fn finish_session(app: AppHandle, state: Arc<AppState>) -> Result<()> {
 }
 
 fn cancel_all(app: &AppHandle, state: Arc<AppState>) {
-    let had_session = state.session.lock().take().is_some();
+    let session = state.session.lock().take();
     #[cfg(target_os = "macos")]
-    if had_session {
-        media::play();
+    if let Some(s) = &session {
+        media::resume_if_paused(s.paused_media);
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = had_session;
+    let _ = session;
     if let Some(h) = state.pipeline.lock().take() {
         h.abort();
     }

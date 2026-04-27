@@ -13,4 +13,6 @@ pub struct Session {
     pub recording: Recording,
     #[cfg(target_os = "macos")]
     pub focus: Option<FocusTarget>,
+    #[cfg(target_os = "macos")]
+    pub paused_media: bool,
 }

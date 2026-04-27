@@ -351,13 +351,17 @@
       <button type="button" class="ghost" onclick={checkForUpdates} disabled={checkingUpdate}>
         {checkingUpdate ? "Checking…" : "Check for updates"}
       </button>
-      {#if updateUrl}
-        <button type="button" class="ghost" onclick={() => openUrl(updateUrl)}>
-          Open release page
-        </button>
-      {/if}
     </div>
-    {#if updateStatus}<p class="hint">{updateStatus}</p>{/if}
+    {#if updateStatus}
+      <p class="hint">
+        {updateStatus}
+        {#if updateUrl}
+          <a href={updateUrl} onclick={(e) => { e.preventDefault(); openUrl(updateUrl); }}>
+            Open release page
+          </a>
+        {/if}
+      </p>
+    {/if}
   </section>
 
   <div class="footer">
@@ -395,6 +399,11 @@
   }
   section {
     margin-bottom: 22px;
+  }
+  .hint a {
+    color: #93c5fd;
+    text-decoration: underline;
+    margin-left: 4px;
   }
   h2 {
     font-size: 13px;

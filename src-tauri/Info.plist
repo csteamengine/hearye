@@ -4,6 +4,8 @@
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>hearye records audio to transcribe your speech to text.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>hearye checks Spotify's play state so it can pause music while you dictate, then resume it after.</string>
 	<key>LSUIElement</key>
 	<true/>
 </dict>
