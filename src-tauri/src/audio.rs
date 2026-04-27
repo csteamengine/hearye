@@ -125,6 +125,10 @@ fn run_stream(
     };
     stream.play()?;
     let _ = stop_rx.recv();
+    // Explicit pause before drop — on macOS this triggers AudioOutputUnitStop
+    // synchronously so TCC can clear the orange "mic in use" indicator without
+    // waiting on the AudioComponent's own teardown delay.
+    let _ = stream.pause();
     drop(stream);
     Ok(src_sr)
 }
