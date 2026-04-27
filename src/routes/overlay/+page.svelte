@@ -163,6 +163,9 @@
     background: transparent;
     overflow: hidden;
     user-select: none;
+    /* Empty area around the pill must not eat clicks meant for whatever is
+       behind the (now larger) window — re-enabled on .pill itself. */
+    pointer-events: none;
   }
   .pill {
     display: flex;
@@ -176,9 +179,10 @@
     border-radius: 14px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
     width: max-content;
-    margin: 8px auto;
+    margin: 36px auto;
     height: 48px;
     box-sizing: border-box;
+    pointer-events: auto;
   }
   canvas {
     width: 220px;

@@ -165,17 +165,22 @@ fn finish_cleanup(app: &AppHandle, _state: &Arc<AppState>) {
 fn show_overlay(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("overlay") {
         position_overlay_top_center(&w);
+        #[cfg(target_os = "macos")]
+        apply_overlay_window_level(&w);
         let _ = w.show();
     }
 }
 
 fn position_overlay_top_center(w: &tauri::WebviewWindow) {
-    // Place the pill near the top of the focused screen, just below the
-    // MacBook notch / menu bar.
+    // Place the pill near the top of the screen the user is currently on.
+    // Prefer the monitor under the cursor so the overlay follows the active
+    // display (and its active Space, including fullscreen apps) instead of
+    // sticking to wherever the hidden window last sat.
     let monitor = w
-        .current_monitor()
+        .cursor_position()
         .ok()
-        .flatten()
+        .and_then(|p| w.monitor_from_point(p.x, p.y).ok().flatten())
+        .or_else(|| w.current_monitor().ok().flatten())
         .or_else(|| w.primary_monitor().ok().flatten());
     let Some(monitor) = monitor else {
         return;
@@ -185,8 +190,8 @@ fn position_overlay_top_center(w: &tauri::WebviewWindow) {
     let mon_pos = monitor.position();
     // Use the configured logical width so we don't depend on outer_size()
     // being settled before first show.
-    let logical_w = 300.0_f64;
-    let logical_y = 40.0_f64;
+    let logical_w = 360.0_f64;
+    let logical_y = 32.0_f64;
     let physical_w = (logical_w * scale) as i32;
     let physical_y = (logical_y * scale) as i32;
     let x = mon_pos.x + ((mon_size.width as i32) - physical_w) / 2;
@@ -414,23 +419,30 @@ fn build_tray(app: &AppHandle) -> Result<()> {
 
 #[cfg(target_os = "macos")]
 fn configure_overlay_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("overlay") {
+        apply_overlay_window_level(&window);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn apply_overlay_window_level(window: &tauri::WebviewWindow) {
     use objc2::msg_send;
     use objc2::runtime::AnyObject;
 
-    let Some(window) = app.get_webview_window("overlay") else {
-        return;
-    };
     let Ok(ns_window) = window.ns_window() else {
         return;
     };
     let ns_window = ns_window as *mut AnyObject;
     unsafe {
         // Level 1000 (kCGScreenSaverWindowLevel) sits above fullscreen apps,
-        // which run at kCGNormalWindowLevel inside their own Space. The lower
-        // floating level (3) is below that veil and gets hidden.
+        // which run at kCGNormalWindowLevel inside their own Space.
         let _: () = msg_send![ns_window, setLevel: 1000i64];
         // canJoinAllSpaces (1) | stationary (16) | fullScreenAuxiliary (256)
-        let _: () = msg_send![ns_window, setCollectionBehavior: 1u64 | 16 | 256];
+        // | canJoinAllApplications (1 << 18, macOS 13+) — the last bit is what
+        // lets a plain NSWindow show on the fullscreen Space owned by another
+        // app (Slack, Chrome) instead of being hidden behind it.
+        let behavior: u64 = 1 | 16 | 256 | (1u64 << 18);
+        let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
         let _: () = msg_send![ns_window, setHidesOnDeactivate: false];
     }
 }
