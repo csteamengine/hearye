@@ -65,6 +65,8 @@ Tauri v2 doesn't currently merge custom Info.plist keys via `tauri.conf.json` fo
 
 Keys are stored in the **macOS Keychain** under the service name `com.charlie.hearye` — never written to disk in plaintext. The default native engine needs no key, so you can avoid this entirely.
 
+`com.charlie.hearye` is the app's bundle identifier (a reverse-DNS namespace for the app itself), not user-specific — it's the same string on every install. Keychain entries live in the current user's **login keychain**, so each macOS account has its own isolated copy of the key. The cached Whisper model under `~/Library/Application Support/com.charlie.hearye/models/` is likewise per-user, since `~` resolves to each user's home directory.
+
 ## Stack
 
 - Tauri v2, Rust, SvelteKit (TS)
