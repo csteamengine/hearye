@@ -185,8 +185,28 @@ fn show_overlay(app: &AppHandle) {
         apply_overlay_window_level(&w);
         let _ = w.show();
         #[cfg(target_os = "macos")]
-        order_front_regardless(&w);
+        {
+            force_display(&w);
+            order_front_regardless(&w);
+        }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn force_display(window: &tauri::WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    let Ok(ns_window) = window.ns_window() else {
+        return;
+    };
+    let ns_window = ns_window as usize;
+    let handle = window.app_handle().clone();
+    let _ = handle.run_on_main_thread(move || unsafe {
+        let ns_window = ns_window as *mut AnyObject;
+        let _: () = msg_send![ns_window, setAlphaValue: 1.0f64];
+        let _: () = msg_send![ns_window, display];
+    });
 }
 
 #[cfg(target_os = "macos")]
@@ -458,6 +478,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                disable_app_nap();
                 configure_overlay_window(app.handle());
                 setup_escape_tap(app.handle());
             }
@@ -524,6 +545,24 @@ fn build_tray(app: &AppHandle) -> Result<()> {
         })
         .build(app)?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn disable_app_nap() {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2_foundation::NSString;
+
+    unsafe {
+        let cls = AnyClass::get("NSProcessInfo").unwrap();
+        let info: *mut AnyObject = msg_send![cls, processInfo];
+        // NSActivityUserInitiatedAllowingIdleSystemSleep = 0x00FFFFFF
+        let options: u64 = 0x00FF_FFFF;
+        let reason = NSString::from_str("HearYe must respond to hotkeys instantly");
+        let activity: *mut AnyObject =
+            msg_send![info, beginActivityWithOptions: options reason: &*reason];
+        let _ = activity;
+    }
 }
 
 #[cfg(target_os = "macos")]
