@@ -40,12 +40,19 @@ pub fn capture_frontmost() -> Option<FocusTarget> {
 }
 
 pub fn paste_text(text: &str, target: Option<FocusTarget>) -> Result<()> {
+    let prev = read_pasteboard();
     write_pasteboard(text)?;
     if let Some(t) = target {
         restore_focus(&t)?;
         std::thread::sleep(std::time::Duration::from_millis(60));
     }
-    synthesize_cmd_v()
+    synthesize_cmd_v()?;
+    // Wait for the app to process the paste before restoring the clipboard.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    match prev {
+        Some(s) => write_pasteboard_plain(&s),
+        None => clear_pasteboard(),
+    }
 }
 
 fn write_pasteboard(text: &str) -> Result<()> {
@@ -87,6 +94,56 @@ fn write_pasteboard(text: &str) -> Result<()> {
         let _: bool = msg_send![pb, setString: &*empty, forType: &*ns_type_transient];
         let _: bool = msg_send![pb, setString: &*empty, forType: &*ns_type_autogen];
         let _: bool = msg_send![pb, setString: &*empty, forType: &*ns_type_concealed];
+    }
+    Ok(())
+}
+
+fn read_pasteboard() -> Option<String> {
+    unsafe {
+        let cls = objc2::class!(NSPasteboard);
+        let pb: *mut AnyObject = msg_send![cls, generalPasteboard];
+        if pb.is_null() {
+            return None;
+        }
+        let ns_type = NSString::from_str(NS_PASTEBOARD_TYPE_STRING);
+        let s: *mut AnyObject = msg_send![pb, stringForType: &*ns_type];
+        if s.is_null() {
+            return None;
+        }
+        let utf8: *const u8 = msg_send![s, UTF8String];
+        if utf8.is_null() {
+            return None;
+        }
+        Some(std::ffi::CStr::from_ptr(utf8 as *const _).to_string_lossy().into_owned())
+    }
+}
+
+fn write_pasteboard_plain(text: &str) -> Result<()> {
+    unsafe {
+        let cls = objc2::class!(NSPasteboard);
+        let pb: *mut AnyObject = msg_send![cls, generalPasteboard];
+        if pb.is_null() {
+            return Err(anyhow!("no general pasteboard"));
+        }
+        let _: i64 = msg_send![pb, clearContents];
+        let ns_text = NSString::from_str(text);
+        let ns_type = NSString::from_str(NS_PASTEBOARD_TYPE_STRING);
+        let ok: bool = msg_send![pb, setString: &*ns_text, forType: &*ns_type];
+        if !ok {
+            return Err(anyhow!("pasteboard restore failed"));
+        }
+    }
+    Ok(())
+}
+
+fn clear_pasteboard() -> Result<()> {
+    unsafe {
+        let cls = objc2::class!(NSPasteboard);
+        let pb: *mut AnyObject = msg_send![cls, generalPasteboard];
+        if pb.is_null() {
+            return Err(anyhow!("no general pasteboard"));
+        }
+        let _: i64 = msg_send![pb, clearContents];
     }
     Ok(())
 }
