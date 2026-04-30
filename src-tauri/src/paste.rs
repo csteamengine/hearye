@@ -41,18 +41,29 @@ pub fn capture_frontmost() -> Option<FocusTarget> {
 
 pub fn paste_text(text: &str, target: Option<FocusTarget>) -> Result<()> {
     let prev = read_pasteboard();
+    log::info!("paste_text: saved previous clipboard ({} chars)", prev.as_ref().map_or(0, |s| s.len()));
     write_pasteboard(text)?;
+    log::info!("paste_text: wrote {} chars to pasteboard", text.len());
     if let Some(t) = target {
         restore_focus(&t)?;
+        log::info!("paste_text: restored focus, waiting 60ms");
         std::thread::sleep(std::time::Duration::from_millis(60));
     }
     synthesize_cmd_v()?;
-    // Wait for the app to process the paste before restoring the clipboard.
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    match prev {
-        Some(s) => write_pasteboard_plain(&s),
-        None => clear_pasteboard(),
-    }
+    log::info!("paste_text: synthesized Cmd+V, waiting 500ms before restore");
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let result = match prev {
+        Some(s) => {
+            log::info!("paste_text: restoring previous clipboard ({} chars)", s.len());
+            write_pasteboard_plain(&s)
+        }
+        None => {
+            log::info!("paste_text: clearing clipboard (no previous content)");
+            clear_pasteboard()
+        }
+    };
+    log::info!("paste_text: done");
+    result
 }
 
 fn write_pasteboard(text: &str) -> Result<()> {

@@ -26,6 +26,8 @@ const ESCAPE_KEY_CODE: i64 = 53;
 static ESCAPE_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 #[cfg(target_os = "macos")]
 static ESCAPE_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
+#[cfg(target_os = "macos")]
+static ESCAPE_TAP_PORT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 #[tauri::command]
 fn list_input_devices() -> Vec<String> {
@@ -254,6 +256,35 @@ fn parse_shortcut(spec: &str) -> Result<Shortcut> {
 }
 
 #[cfg(target_os = "macos")]
+fn check_accessibility() -> bool {
+    use core_foundation::base::TCFType;
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::string::CFString;
+
+    extern "C" {
+        fn AXIsProcessTrustedWithOptions(options: *const std::ffi::c_void) -> bool;
+    }
+
+    let key = CFString::new("AXTrustedCheckOptionPrompt");
+    let value = CFBoolean::true_value();
+    let options = CFDictionary::from_CFType_pairs(&[(key, value)]);
+    unsafe { AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef() as *const _) }
+}
+
+#[cfg(target_os = "macos")]
+fn reenable_tap() {
+    extern "C" {
+        fn CGEventTapEnable(tap: *mut std::ffi::c_void, enable: bool);
+    }
+    let ptr = ESCAPE_TAP_PORT.load(std::sync::atomic::Ordering::Relaxed);
+    if ptr != 0 {
+        log::info!("re-enabling CGEventTap after OS disabled it");
+        unsafe { CGEventTapEnable(ptr as *mut _, true) };
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn setup_escape_tap(app: &AppHandle) {
     use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
     use core_graphics::event::{CGEventTap, CGEventTapLocation, CGEventTapPlacement,
@@ -262,21 +293,36 @@ fn setup_escape_tap(app: &AppHandle) {
 
     let _ = ESCAPE_APP.set(app.clone());
 
+    if !check_accessibility() {
+        log::warn!("Accessibility permission not granted — Escape interception will not work. \
+                    Please grant Accessibility access in System Settings > Privacy & Security > Accessibility.");
+    }
+
     let tap = CGEventTap::new(
         CGEventTapLocation::Session,
         CGEventTapPlacement::HeadInsertEventTap,
         CGEventTapOptions::Default,
-        vec![CGEventType::KeyDown],
-        move |_proxy, _event_type, event| {
+        vec![CGEventType::KeyDown, CGEventType::KeyUp],
+        move |_proxy, event_type, event| {
+            if matches!(
+                event_type,
+                CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
+            ) {
+                reenable_tap();
+                return CallbackResult::Keep;
+            }
             if !ESCAPE_ACTIVE.load(Ordering::Relaxed) {
                 return CallbackResult::Keep;
             }
             let key_code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
             if key_code == ESCAPE_KEY_CODE {
-                if let Some(app) = ESCAPE_APP.get() {
-                    let app = app.clone();
-                    let state = app.state::<Arc<AppState>>().inner().clone();
-                    tauri::async_runtime::spawn_blocking(move || cancel_all(&app, state));
+                log::info!("CGEventTap: intercepted Escape (event_type={event_type:?})");
+                if matches!(event_type, CGEventType::KeyDown) {
+                    if let Some(app) = ESCAPE_APP.get() {
+                        let app = app.clone();
+                        let state = app.state::<Arc<AppState>>().inner().clone();
+                        tauri::async_runtime::spawn_blocking(move || cancel_all(&app, state));
+                    }
                 }
                 return CallbackResult::Drop;
             }
@@ -285,17 +331,24 @@ fn setup_escape_tap(app: &AppHandle) {
     );
 
     let Ok(tap) = tap else {
-        log::warn!("could not create CGEventTap for Escape");
+        log::warn!("could not create CGEventTap for Escape — Accessibility permission likely missing");
         return;
     };
 
-    let loop_source = tap.mach_port()
+    let port = tap.mach_port();
+    let loop_source = port
         .create_runloop_source(0)
         .expect("could not create run loop source from event tap");
     CFRunLoop::get_current().add_source(&loop_source, unsafe { kCFRunLoopCommonModes });
     tap.enable();
+    log::info!("CGEventTap for Escape created and enabled");
 
-    // Leak the tap so it lives for the process lifetime.
+    use core_foundation::base::TCFType;
+    ESCAPE_TAP_PORT.store(
+        port.as_concrete_TypeRef() as usize,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    // Leak the tap and source so they live for the process lifetime.
     std::mem::forget(tap);
     std::mem::forget(loop_source);
 }

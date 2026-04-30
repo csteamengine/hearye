@@ -8,7 +8,8 @@
     | "recording"
     | "transcribing"
     | "cleaning"
-    | "downloading-model";
+    | "downloading-model"
+    | "loading-model";
 
   const NUM_BARS = 36;
   const BAR_WIDTH = 3;
@@ -48,6 +49,7 @@
       case "cleaning":
         return "#34d399";
       case "downloading-model":
+      case "loading-model":
         return "#f472b6";
       default:
         return "#6b7280";
@@ -73,7 +75,8 @@
     } else if (
       phase === "transcribing" ||
       phase === "cleaning" ||
-      phase === "downloading-model"
+      phase === "downloading-model" ||
+      phase === "loading-model"
     ) {
       // Busy state — sine wave so the user sees activity.
       for (let i = 0; i < NUM_BARS; i++) {
@@ -131,7 +134,17 @@
     );
     unlisteners.push(
       await listen<string>("hearye://state", (e) => {
-        phase = e.payload as Phase;
+        const newPhase = e.payload as Phase;
+        if (newPhase === "recording" || newPhase === "idle") {
+          target.fill(0);
+          display.fill(0);
+          latestRms = 0;
+          if (canvas) {
+            const ctx = canvas.getContext("2d");
+            if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+          }
+        }
+        phase = newPhase;
         phaseTime = 0;
       }),
     );

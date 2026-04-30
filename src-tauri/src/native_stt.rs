@@ -59,7 +59,7 @@ fn model_path() -> PathBuf {
 
 pub async fn transcribe_wav(app: AppHandle, wav: Vec<u8>) -> Result<String> {
     let model = ensure_model_downloaded(&app).await?;
-    tauri::async_runtime::spawn_blocking(move || transcribe_blocking(&model, &wav)).await?
+    tauri::async_runtime::spawn_blocking(move || transcribe_blocking(&app, &model, &wav)).await?
 }
 
 /// Resolve the whisper model file. Tiered:
@@ -117,7 +117,7 @@ fn model_is_valid(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn transcribe_blocking(model_path: &Path, wav: &[u8]) -> Result<String> {
+fn transcribe_blocking(app: &AppHandle, model_path: &Path, wav: &[u8]) -> Result<String> {
     log(format!("decoding {} wav bytes", wav.len()));
     let mut samples = wav_to_f32_mono(wav)?;
     log(format!(
@@ -136,7 +136,7 @@ fn transcribe_blocking(model_path: &Path, wav: &[u8]) -> Result<String> {
         ));
         samples.resize(MIN_SAMPLES, 0.0);
     }
-    let ctx = get_ctx(model_path)?;
+    let ctx = get_ctx(app, model_path)?;
     let mut state = ctx
         .create_state()
         .map_err(|e| anyhow!("whisper create_state: {e:?}"))?;
@@ -206,16 +206,18 @@ fn clean_whisper_output(text: &str) -> String {
     buf.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn get_ctx(model_path: &Path) -> Result<&'static WhisperContext> {
+fn get_ctx(app: &AppHandle, model_path: &Path) -> Result<&'static WhisperContext> {
     if let Some(ctx) = CTX.get() {
         return Ok(ctx);
     }
     let path_str = model_path
         .to_str()
         .ok_or_else(|| anyhow!("model path is not valid UTF-8"))?;
-    log(format!("initializing whisper context from {path_str}"));
+    log(format!("loading whisper model into memory from {path_str}"));
+    let _ = app.emit("hearye://state", "loading-model");
     let ctx = WhisperContext::new_with_params(path_str, WhisperContextParameters::default())
         .map_err(|e| anyhow!("WhisperContext::new: {e:?}"))?;
+    log("whisper model loaded");
     let _ = CTX.set(ctx);
     Ok(CTX.get().expect("just set"))
 }
