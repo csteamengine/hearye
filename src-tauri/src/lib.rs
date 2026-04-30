@@ -19,7 +19,13 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
 
-const ESCAPE_SHORTCUT: &str = "Escape";
+#[cfg(target_os = "macos")]
+const ESCAPE_KEY_CODE: i64 = 53;
+
+#[cfg(target_os = "macos")]
+static ESCAPE_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(target_os = "macos")]
+static ESCAPE_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
 
 #[tauri::command]
 fn list_input_devices() -> Vec<String> {
@@ -51,30 +57,38 @@ fn cancel_recording(app: AppHandle, state: tauri::State<'_, Arc<AppState>>) -> R
 
 fn begin_session(app: &AppHandle, state: Arc<AppState>) {
     {
-        let slot = state.session.lock();
+        let mut slot = state.session.lock();
         if slot.is_some() {
             return;
         }
+        #[cfg(target_os = "macos")]
+        let focus = paste::capture_frontmost();
+
+        let cfg = settings::Settings::load(app);
+        let recording = audio::start(app.clone(), cfg.input_device.clone());
+
+        *slot = Some(Session {
+            recording,
+            #[cfg(target_os = "macos")]
+            focus,
+            #[cfg(target_os = "macos")]
+            paused_media: false,
+        });
     }
-    #[cfg(target_os = "macos")]
-    let focus = paste::capture_frontmost();
 
-    let cfg = settings::Settings::load(app);
-    let recording = audio::start(app.clone(), cfg.input_device.clone());
-
-    #[cfg(target_os = "macos")]
-    let paused_media = media::pause_if_playing();
-
-    *state.session.lock() = Some(Session {
-        recording,
-        #[cfg(target_os = "macos")]
-        focus,
-        #[cfg(target_os = "macos")]
-        paused_media,
-    });
+    // Show overlay and emit state before the media-pause probe which can
+    // take 200-700ms, so the user gets immediate visual feedback.
     show_overlay(app);
-    register_escape(app);
     let _ = app.emit("hearye://state", "recording");
+    register_escape();
+
+    #[cfg(target_os = "macos")]
+    {
+        let paused = media::pause_if_playing();
+        if let Some(s) = state.session.lock().as_mut() {
+            s.paused_media = paused;
+        }
+    }
 }
 
 fn spawn_finish(app: &AppHandle, state: Arc<AppState>) {
@@ -159,7 +173,7 @@ fn cancel_all(app: &AppHandle, state: Arc<AppState>) {
 
 fn finish_cleanup(app: &AppHandle, _state: &Arc<AppState>) {
     hide_overlay(app);
-    unregister_escape(app);
+    unregister_escape();
 }
 
 fn show_overlay(app: &AppHandle) {
@@ -168,7 +182,25 @@ fn show_overlay(app: &AppHandle) {
         #[cfg(target_os = "macos")]
         apply_overlay_window_level(&w);
         let _ = w.show();
+        #[cfg(target_os = "macos")]
+        order_front_regardless(&w);
     }
+}
+
+#[cfg(target_os = "macos")]
+fn order_front_regardless(window: &tauri::WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    let Ok(ns_window) = window.ns_window() else {
+        return;
+    };
+    let ns_window = ns_window as usize;
+    let handle = window.app_handle().clone();
+    let _ = handle.run_on_main_thread(move || unsafe {
+        let ns_window = ns_window as *mut AnyObject;
+        let _: () = msg_send![ns_window, orderFrontRegardless];
+    });
 }
 
 fn position_overlay_top_center(w: &tauri::WebviewWindow) {
@@ -221,38 +253,61 @@ fn parse_shortcut(spec: &str) -> Result<Shortcut> {
         .map_err(|e| anyhow::anyhow!("invalid shortcut '{spec}': {e}"))
 }
 
-fn register_escape(app: &AppHandle) {
-    // Defer to an async task so we never call back into the global-shortcut plugin
-    // from inside one of its own callbacks (which would re-enter its lock).
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let Ok(esc) = parse_shortcut(ESCAPE_SHORTCUT) else {
-            return;
-        };
-        let app_for_handler = app.clone();
-        let state = app.state::<Arc<AppState>>().inner().clone();
-        if let Err(e) = app
-            .global_shortcut()
-            .on_shortcut(esc, move |_handle, _shortcut, event| {
-                if matches!(event.state(), ShortcutState::Pressed) {
-                    let app = app_for_handler.clone();
-                    let state = state.clone();
+#[cfg(target_os = "macos")]
+fn setup_escape_tap(app: &AppHandle) {
+    use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
+    use core_graphics::event::{CGEventTap, CGEventTapLocation, CGEventTapPlacement,
+        CGEventTapOptions, CGEventType, CallbackResult, EventField};
+    use std::sync::atomic::Ordering;
+
+    let _ = ESCAPE_APP.set(app.clone());
+
+    let tap = CGEventTap::new(
+        CGEventTapLocation::Session,
+        CGEventTapPlacement::HeadInsertEventTap,
+        CGEventTapOptions::Default,
+        vec![CGEventType::KeyDown],
+        move |_proxy, _event_type, event| {
+            if !ESCAPE_ACTIVE.load(Ordering::Relaxed) {
+                return CallbackResult::Keep;
+            }
+            let key_code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
+            if key_code == ESCAPE_KEY_CODE {
+                if let Some(app) = ESCAPE_APP.get() {
+                    let app = app.clone();
+                    let state = app.state::<Arc<AppState>>().inner().clone();
                     tauri::async_runtime::spawn_blocking(move || cancel_all(&app, state));
                 }
-            })
-        {
-            log::warn!("could not register Escape: {e}");
-        }
-    });
+                return CallbackResult::Drop;
+            }
+            CallbackResult::Keep
+        },
+    );
+
+    let Ok(tap) = tap else {
+        log::warn!("could not create CGEventTap for Escape");
+        return;
+    };
+
+    let loop_source = tap.mach_port()
+        .create_runloop_source(0)
+        .expect("could not create run loop source from event tap");
+    CFRunLoop::get_current().add_source(&loop_source, unsafe { kCFRunLoopCommonModes });
+    tap.enable();
+
+    // Leak the tap so it lives for the process lifetime.
+    std::mem::forget(tap);
+    std::mem::forget(loop_source);
 }
 
-fn unregister_escape(app: &AppHandle) {
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        if let Ok(esc) = parse_shortcut(ESCAPE_SHORTCUT) {
-            let _ = app.global_shortcut().unregister(esc);
-        }
-    });
+fn register_escape() {
+    #[cfg(target_os = "macos")]
+    ESCAPE_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn unregister_escape() {
+    #[cfg(target_os = "macos")]
+    ESCAPE_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn register_shortcuts(app: &AppHandle) -> Result<()> {
@@ -351,6 +406,7 @@ pub fn run() {
             {
                 let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
                 configure_overlay_window(app.handle());
+                setup_escape_tap(app.handle());
             }
             build_tray(app.handle())?;
             // Show settings only on the very first launch (before user has saved anything).
@@ -405,7 +461,7 @@ fn build_tray(app: &AppHandle) -> Result<()> {
 
     TrayIconBuilder::with_id("hearye-tray")
         .icon(icon)
-        .icon_as_template(true)
+        .icon_as_template(false)
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id.as_ref() {
