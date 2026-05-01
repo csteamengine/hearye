@@ -528,14 +528,11 @@ fn build_tray(app: &AppHandle) -> Result<()> {
     let quit_item = MenuItem::with_id(app, "quit", "Quit HearYe", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&settings_item, &quit_item])?;
 
-    let icon = app
-        .default_window_icon()
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("no default window icon"))?;
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?.to_owned();
 
     TrayIconBuilder::with_id("hearye-tray")
         .icon(icon)
-        .icon_as_template(false)
+        .icon_as_template(true)
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id.as_ref() {
