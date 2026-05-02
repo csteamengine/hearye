@@ -22,8 +22,6 @@ jobs:
         with:
           fetch-depth: 0
       - id: check
-        # If a release tag (vX.Y.Z) points at this commit, skip — the release
-        # workflow is already building it for both arch slices.
         run: |
           if git tag --points-at HEAD | grep -qE '^v[0-9]'; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -33,17 +31,10 @@ jobs:
           fi
 
   build:
-    name: build (${{ matrix.target }})
+    name: build
     needs: guard
     if: needs.guard.outputs.skip != 'true'
     runs-on: macos-14
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-          - target: x86_64-apple-darwin
-
     steps:
       - uses: actions/checkout@v4
 
@@ -58,12 +49,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
-          key: ${{ matrix.target }}
 
       - name: Install JS deps
         run: pnpm install --frozen-lockfile
@@ -81,4 +71,4 @@ jobs:
         run: pnpm check
 
       - name: Build app
-        run: pnpm tauri build --target ${{ matrix.target }} --bundles app
+        run: pnpm tauri build --target universal-apple-darwin --bundles app
