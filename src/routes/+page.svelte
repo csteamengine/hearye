@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getVersion } from "@tauri-apps/api/app";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { load, type Store } from "@tauri-apps/plugin-store";
   import { check, type Update } from "@tauri-apps/plugin-updater";
 
@@ -29,6 +30,21 @@
   let installing = $state(false);
   let recording = $state<null | "toggle" | "ptt">(null);
 
+  let saved = {
+    engine: "native", aiCleanup: false, toggleHotkey: "Cmd+Shift+Space",
+    pttHotkey: "F18", whisperModel: "whisper-large-v3-turbo",
+    haikuModel: "claude-haiku-4-5-20251001", inputDevice: "",
+  };
+
+  let dirty = $derived(
+    engine !== saved.engine || aiCleanup !== saved.aiCleanup ||
+    toggleHotkey !== saved.toggleHotkey || pttHotkey !== saved.pttHotkey ||
+    whisperModel !== saved.whisperModel || haikuModel !== saved.haikuModel ||
+    inputDevice !== saved.inputDevice || !!groqKey || !!anthropicKey
+  );
+
+  let unlisten: UnlistenFn | null = null;
+
   onMount(async () => {
     store = await load(STORE_FILE, { defaults: {}, autoSave: false });
     engine = ((await store.get<string>("engine")) as "native" | "groq" | undefined) ?? "native";
@@ -42,7 +58,15 @@
     inputDevice = (await store.get<string>("input_device")) ?? "";
     devices = await invoke<string[]>("list_input_devices");
     appVersion = await getVersion();
+    snapshotSaved();
+
+    unlisten = await listen("hearye://close-requested", () => {
+      if (dirty && !confirm("You have unsaved changes. Close anyway?")) return;
+      invoke("hide_settings");
+    });
   });
+
+  onDestroy(() => unlisten?.());
 
   async function checkForUpdates() {
     checkingUpdate = true;
@@ -82,6 +106,13 @@
       updateStatus = `Update failed: ${String(e)}`;
       installing = false;
     }
+  }
+
+  function snapshotSaved() {
+    saved = {
+      engine, aiCleanup, toggleHotkey, pttHotkey,
+      whisperModel, haikuModel, inputDevice,
+    };
   }
 
   async function refreshDevices() {
@@ -206,6 +237,7 @@
     } catch (e) {
       hotkeyError = String(e);
     }
+    snapshotSaved();
     savedNotice = "Saved.";
     setTimeout(() => (savedNotice = ""), 1500);
   }

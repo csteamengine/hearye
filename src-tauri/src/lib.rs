@@ -14,7 +14,7 @@ use anyhow::Result;
 use state::{AppState, Session};
 use std::sync::Arc;
 use tauri::async_runtime::JoinHandle;
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
@@ -428,6 +428,17 @@ fn on_toggle(app: &AppHandle, state: Arc<AppState>) {
 }
 
 #[tauri::command]
+fn hide_settings(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.hide();
+        #[cfg(target_os = "macos")]
+        {
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        }
+    }
+}
+
+#[tauri::command]
 fn reload_hotkeys(app: AppHandle) -> Result<(), String> {
     register_shortcuts(&app).map_err(|e| e.to_string())
 }
@@ -470,6 +481,7 @@ pub fn run() {
             stop_recording,
             cancel_recording,
             reload_hotkeys,
+            hide_settings,
             list_input_devices,
             open_settings,
             suspend_hotkeys,
@@ -501,18 +513,14 @@ pub fn run() {
                 }
             }
             // Hide settings instead of closing it so the app keeps running in the tray.
+            // We emit an event so the frontend can show a confirmation dialog
+            // if there are unsaved changes before hiding.
             if let Some(w) = app.get_webview_window("settings") {
                 let w_clone = w.clone();
                 w.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
-                        let _ = w_clone.hide();
-                        #[cfg(target_os = "macos")]
-                        {
-                            let _ = w_clone
-                                .app_handle()
-                                .set_activation_policy(tauri::ActivationPolicy::Accessory);
-                        }
+                        let _ = w_clone.emit("hearye://close-requested", ());
                     }
                 });
             }
@@ -527,8 +535,9 @@ pub fn run() {
 
 fn build_tray(app: &AppHandle) -> Result<()> {
     let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit HearYe", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&settings_item, &quit_item])?;
+    let menu = Menu::with_items(app, &[&settings_item, &separator, &quit_item])?;
 
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?.to_owned();
 

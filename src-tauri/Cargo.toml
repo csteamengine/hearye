@@ -1,6 +1,6 @@
 [package]
 name = "hearye"
-version = "0.1.10"
+version = "0.1.11"
 description = "Free dictation app — Whisper + optional Claude cleanup, paste anywhere"
 authors = ["Charlie Steenhagen"]
 edition = "2021"
