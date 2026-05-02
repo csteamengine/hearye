@@ -79,6 +79,15 @@
   }
 
   function discardAndClose() {
+    engine = saved.engine as "native" | "groq";
+    aiCleanup = saved.aiCleanup;
+    toggleHotkey = saved.toggleHotkey;
+    pttHotkey = saved.pttHotkey;
+    whisperModel = saved.whisperModel;
+    haikuModel = saved.haikuModel;
+    inputDevice = saved.inputDevice;
+    groqKey = "";
+    anthropicKey = "";
     showCloseConfirm = false;
     invoke("hide_settings");
   }
