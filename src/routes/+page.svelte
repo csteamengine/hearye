@@ -29,6 +29,7 @@
   let availableUpdate = $state<Update | null>(null);
   let installing = $state(false);
   let recording = $state<null | "toggle" | "ptt">(null);
+  let showCloseConfirm = $state(false);
 
   let saved = {
     engine: "native", aiCleanup: false, toggleHotkey: "Cmd+Shift+Space",
@@ -61,12 +62,26 @@
     snapshotSaved();
 
     unlisten = await listen("hearye://close-requested", () => {
-      if (dirty && !confirm("You have unsaved changes. Close anyway?")) return;
-      invoke("hide_settings");
+      if (dirty) {
+        showCloseConfirm = true;
+      } else {
+        invoke("hide_settings");
+      }
     });
   });
 
   onDestroy(() => unlisten?.());
+
+  async function saveAndClose() {
+    await save();
+    showCloseConfirm = false;
+    invoke("hide_settings");
+  }
+
+  function discardAndClose() {
+    showCloseConfirm = false;
+    invoke("hide_settings");
+  }
 
   async function checkForUpdates() {
     checkingUpdate = true;
@@ -242,6 +257,17 @@
     setTimeout(() => (savedNotice = ""), 1500);
   }
 </script>
+
+{#if showCloseConfirm}
+  <div class="close-confirm">
+    <span>You have unsaved changes.</span>
+    <div class="close-confirm-actions">
+      <button type="button" class="ghost" onclick={discardAndClose}>Discard</button>
+      <button type="button" onclick={saveAndClose}>Save & close</button>
+      <button type="button" class="ghost" onclick={() => (showCloseConfirm = false)}>Cancel</button>
+    </div>
+  </div>
+{/if}
 
 <main>
   <h1>HearYe</h1>
@@ -568,5 +594,23 @@
   .err {
     color: #f87171;
     font-size: 12px;
+  }
+  .close-confirm {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: #1c1a2e;
+    border-bottom: 1px solid #4f46e5;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 13px;
+  }
+  .close-confirm-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
   }
 </style>
