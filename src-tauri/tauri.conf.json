@@ -42,6 +42,14 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/csteamengine/hearye/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIxNDJCNzJCNEQxNkRCQkQKUldTOTJ4Wk5LN2RDSVd0eVVRbnEzQzd3Z2F3U05Lc2FtZGxUUDVhaXYvd2hNYXhnYlZmbURFYkMK"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

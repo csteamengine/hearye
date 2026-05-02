@@ -2,11 +2,10 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getVersion } from "@tauri-apps/api/app";
-  import { openUrl } from "@tauri-apps/plugin-opener";
   import { load, type Store } from "@tauri-apps/plugin-store";
+  import { check, type Update } from "@tauri-apps/plugin-updater";
 
   const STORE_FILE = "settings.json";
-  const RELEASE_REPO = "csteamengine/hearye";
 
   let store: Store | null = null;
   let engine = $state<"native" | "groq">("native");
@@ -25,8 +24,9 @@
   let hotkeyError = $state("");
   let appVersion = $state("");
   let updateStatus = $state("");
-  let updateUrl = $state("");
   let checkingUpdate = $state(false);
+  let availableUpdate = $state<Update | null>(null);
+  let installing = $state(false);
   let recording = $state<null | "toggle" | "ptt">(null);
 
   onMount(async () => {
@@ -44,38 +44,15 @@
     appVersion = await getVersion();
   });
 
-  function compareSemver(a: string, b: string): number {
-    const pa = a.replace(/^v/, "").split(".").map((x) => parseInt(x, 10) || 0);
-    const pb = b.replace(/^v/, "").split(".").map((x) => parseInt(x, 10) || 0);
-    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-      const da = pa[i] ?? 0;
-      const db = pb[i] ?? 0;
-      if (da !== db) return da - db;
-    }
-    return 0;
-  }
-
   async function checkForUpdates() {
-    if (!RELEASE_REPO) {
-      updateStatus = "Update channel not configured.";
-      updateUrl = "";
-      return;
-    }
     checkingUpdate = true;
     updateStatus = "";
-    updateUrl = "";
+    availableUpdate = null;
     try {
-      const r = await fetch(`https://api.github.com/repos/${RELEASE_REPO}/releases/latest`, {
-        headers: { Accept: "application/vnd.github+json" },
-      });
-      if (!r.ok) throw new Error(`GitHub returned ${r.status}`);
-      const data = await r.json();
-      const latest: string = data.tag_name ?? "";
-      const url: string = data.html_url ?? "";
-      if (!latest) throw new Error("no tag in release");
-      if (compareSemver(latest, appVersion) > 0) {
-        updateStatus = `New version ${latest} available (you have ${appVersion}).`;
-        updateUrl = url;
+      const update = await check();
+      if (update) {
+        availableUpdate = update;
+        updateStatus = `Version ${update.version} available (you have ${appVersion}).`;
       } else {
         updateStatus = `You're on the latest version (${appVersion}).`;
       }
@@ -83,6 +60,27 @@
       updateStatus = `Update check failed: ${String(e)}`;
     } finally {
       checkingUpdate = false;
+    }
+  }
+
+  async function installUpdate() {
+    if (!availableUpdate) return;
+    installing = true;
+    updateStatus = "Downloading update…";
+    try {
+      await availableUpdate.downloadAndInstall((event) => {
+        if (event.event === "Started" && event.data.contentLength) {
+          updateStatus = `Downloading update (${Math.round(event.data.contentLength / 1024)} KB)…`;
+        } else if (event.event === "Finished") {
+          updateStatus = "Installing…";
+        }
+      });
+      updateStatus = "Update installed. Restarting…";
+      const { relaunch } = await import("@tauri-apps/plugin-process");
+      await relaunch();
+    } catch (e) {
+      updateStatus = `Update failed: ${String(e)}`;
+      installing = false;
     }
   }
 
@@ -348,19 +346,17 @@
     <h2>About</h2>
     <p class="hint">HearYe {appVersion}</p>
     <div class="row gap">
-      <button type="button" class="ghost" onclick={checkForUpdates} disabled={checkingUpdate}>
+      <button type="button" class="ghost" onclick={checkForUpdates} disabled={checkingUpdate || installing}>
         {checkingUpdate ? "Checking…" : "Check for updates"}
       </button>
+      {#if availableUpdate && !installing}
+        <button type="button" onclick={installUpdate}>
+          Install & restart
+        </button>
+      {/if}
     </div>
     {#if updateStatus}
-      <p class="hint">
-        {updateStatus}
-        {#if updateUrl}
-          <a href={updateUrl} onclick={(e) => { e.preventDefault(); openUrl(updateUrl); }}>
-            Open release page
-          </a>
-        {/if}
-      </p>
+      <p class="hint">{updateStatus}</p>
     {/if}
   </section>
 
@@ -399,11 +395,6 @@
   }
   section {
     margin-bottom: 22px;
-  }
-  .hint a {
-    color: #93c5fd;
-    text-decoration: underline;
-    margin-left: 4px;
   }
   h2 {
     font-size: 13px;
