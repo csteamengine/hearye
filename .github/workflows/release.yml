@@ -11,8 +11,16 @@ permissions:
 
 jobs:
   build:
-    name: build & release
+    name: build (${{ matrix.target }})
     runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: aarch64
+          - target: x86_64-apple-darwin
+            arch: x64
     steps:
       - uses: actions/checkout@v4
 
@@ -27,11 +35,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
 
       - name: Install JS deps
         run: pnpm install --frozen-lockfile
@@ -45,8 +54,8 @@ jobs:
       - name: Download Whisper model (if not cached)
         run: ./scripts/download-model.sh
 
-      - name: Build Tauri app (universal binary)
-        run: pnpm tauri build --target universal-apple-darwin
+      - name: Build Tauri app
+        run: pnpm tauri build --target ${{ matrix.target }}
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -59,60 +68,83 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-          BUNDLE_DIR="src-tauri/target/universal-apple-darwin/release/bundle"
-          echo "--- Bundle directory contents ---"
-          find "$BUNDLE_DIR" -type f 2>/dev/null || echo "(bundle dir not found)"
+          BUNDLE_DIR="src-tauri/target/${{ matrix.target }}/release/bundle"
+          find "$BUNDLE_DIR" -type f
 
           DMG=$(find "$BUNDLE_DIR" -name '*.dmg' | head -1)
           if [ -z "$DMG" ]; then echo "ERROR: no .dmg found"; exit 1; fi
-          DMG_NAME="HearYe_${VERSION}_universal.dmg"
+          DMG_NAME="HearYe_${VERSION}_${{ matrix.arch }}.dmg"
           cp "$DMG" "$DMG_NAME"
           echo "dmg=${DMG_NAME}" >> "$GITHUB_OUTPUT"
 
           TARGZ=$(find "$BUNDLE_DIR" -name '*.tar.gz' ! -name '*.sig' | head -1)
           if [ -z "$TARGZ" ]; then echo "ERROR: no .tar.gz found"; exit 1; fi
-          TARGZ_NAME="HearYe.app.tar.gz"
+          TARGZ_NAME="HearYe_${{ matrix.arch }}.app.tar.gz"
           cp "$TARGZ" "$TARGZ_NAME"
           echo "targz=${TARGZ_NAME}" >> "$GITHUB_OUTPUT"
 
           SIG=$(find "$BUNDLE_DIR" -name '*.tar.gz.sig' | head -1)
-          if [ -z "$SIG" ]; then echo "ERROR: no .sig found — signing may not have run"; exit 1; fi
+          if [ -z "$SIG" ]; then echo "ERROR: no .sig found"; exit 1; fi
           SIGNATURE=$(cat "$SIG")
           echo "signature=${SIGNATURE}" >> "$GITHUB_OUTPUT"
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.arch }}
+          path: |
+            ${{ steps.artifacts.outputs.dmg }}
+            ${{ steps.artifacts.outputs.targz }}
+
+      - name: Save signature
+        run: echo "${{ steps.artifacts.outputs.signature }}" > signature-${{ matrix.arch }}.txt
+
+      - name: Upload signature
+        uses: actions/upload-artifact@v4
+        with:
+          name: sig-${{ matrix.arch }}
+          path: signature-${{ matrix.arch }}.txt
+
+  release:
+    name: create release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
       - name: Generate update manifest
         run: |
-          VERSION="${{ steps.artifacts.outputs.version }}"
-          TAG="${{ steps.artifacts.outputs.tag }}"
-          SIGNATURE="${{ steps.artifacts.outputs.signature }}"
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
           PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          URL="https://github.com/csteamengine/hearye/releases/download/${TAG}/HearYe.app.tar.gz"
+          SIG_AARCH64=$(cat sig-aarch64/signature-aarch64.txt)
+          SIG_X64=$(cat sig-x64/signature-x64.txt)
+          BASE_URL="https://github.com/csteamengine/hearye/releases/download/${TAG}"
 
-          cat > latest.json <<MANIFEST
+          cat > latest.json <<EOF
           {
             "version": "${VERSION}",
             "notes": "Release ${TAG}",
             "pub_date": "${PUB_DATE}",
             "platforms": {
               "darwin-aarch64": {
-                "signature": "${SIGNATURE}",
-                "url": "${URL}"
+                "signature": "${SIG_AARCH64}",
+                "url": "${BASE_URL}/HearYe_aarch64.app.tar.gz"
               },
               "darwin-x86_64": {
-                "signature": "${SIGNATURE}",
-                "url": "${URL}"
+                "signature": "${SIG_X64}",
+                "url": "${BASE_URL}/HearYe_x64.app.tar.gz"
               }
             }
           }
-          MANIFEST
+          EOF
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.artifacts.outputs.tag }}
-          name: HearYe ${{ steps.artifacts.outputs.tag }}
           generate_release_notes: true
           files: |
-            ${{ steps.artifacts.outputs.dmg }}
-            ${{ steps.artifacts.outputs.targz }}
+            build-aarch64/*
+            build-x64/*
             latest.json
