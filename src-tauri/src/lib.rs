@@ -277,6 +277,11 @@ fn parse_shortcut(spec: &str) -> Result<Shortcut> {
 
 #[cfg(target_os = "macos")]
 fn check_accessibility() -> bool {
+    check_accessibility_inner(true)
+}
+
+#[cfg(target_os = "macos")]
+fn check_accessibility_inner(prompt: bool) -> bool {
     use core_foundation::base::TCFType;
     use core_foundation::boolean::CFBoolean;
     use core_foundation::dictionary::CFDictionary;
@@ -287,9 +292,21 @@ fn check_accessibility() -> bool {
     }
 
     let key = CFString::new("AXTrustedCheckOptionPrompt");
-    let value = CFBoolean::true_value();
+    let value = if prompt { CFBoolean::true_value() } else { CFBoolean::false_value() };
     let options = CFDictionary::from_CFType_pairs(&[(key, value)]);
     unsafe { AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef() as *const _) }
+}
+
+/// Reset the TCC Accessibility entry for this app so macOS will re-prompt
+/// with the current binary's code signature. Call before relaunching after
+/// an in-place update to avoid the "granted but silently denied" state.
+#[cfg(target_os = "macos")]
+fn reset_accessibility_tcc() {
+    let bundle_id = "com.charlie.hearye";
+    log::info!("resetting TCC Accessibility entry for {bundle_id}");
+    let _ = std::process::Command::new("tccutil")
+        .args(["reset", "Accessibility", bundle_id])
+        .output();
 }
 
 #[cfg(target_os = "macos")]
@@ -351,7 +368,13 @@ fn setup_escape_tap(app: &AppHandle) {
     );
 
     let Ok(tap) = tap else {
-        log::warn!("could not create CGEventTap for Escape — Accessibility permission likely missing");
+        if check_accessibility_inner(false) {
+            log::warn!("CGEventTap creation failed despite AXIsProcessTrusted=true — stale TCC entry, resetting");
+            reset_accessibility_tcc();
+            check_accessibility();
+        } else {
+            log::warn!("could not create CGEventTap for Escape — Accessibility permission not granted");
+        }
         return;
     };
 
@@ -450,6 +473,12 @@ fn suspend_hotkeys(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn prepare_update_relaunch() {
+    #[cfg(target_os = "macos")]
+    reset_accessibility_tcc();
+}
+
+#[tauri::command]
 fn has_api_key(name: String) -> Result<bool, String> {
     if !keychain::is_known(&name) {
         return Err(format!("unknown key: {name}"));
@@ -486,7 +515,8 @@ pub fn run() {
             open_settings,
             suspend_hotkeys,
             has_api_key,
-            set_api_key
+            set_api_key,
+            prepare_update_relaunch
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

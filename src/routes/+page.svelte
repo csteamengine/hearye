@@ -124,6 +124,7 @@
         }
       });
       updateStatus = "Update installed. Restarting…";
+      await invoke("prepare_update_relaunch");
       const { relaunch } = await import("@tauri-apps/plugin-process");
       await relaunch();
     } catch (e) {
