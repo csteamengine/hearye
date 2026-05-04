@@ -46,7 +46,7 @@ jobs:
         run: ./scripts/download-model.sh
 
       - name: Build Tauri app (universal binary)
-        run: pnpm tauri build --target universal-apple-darwin
+        run: pnpm tauri build --target universal-apple-darwin --bundles dmg,updater
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
