@@ -297,16 +297,43 @@ fn check_accessibility_inner(prompt: bool) -> bool {
     unsafe { AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef() as *const _) }
 }
 
-/// Reset the TCC Accessibility entry for this app so macOS will re-prompt
-/// with the current binary's code signature. Call before relaunching after
-/// an in-place update to avoid the "granted but silently denied" state.
+/// Open System Settings to the Accessibility pane so the user can toggle
+/// the permission off and back on (fixes stale TCC after in-place update).
 #[cfg(target_os = "macos")]
-fn reset_accessibility_tcc() {
-    let bundle_id = "com.charlie.hearye";
-    log::info!("resetting TCC Accessibility entry for {bundle_id}");
-    let _ = std::process::Command::new("tccutil")
-        .args(["reset", "Accessibility", bundle_id])
-        .output();
+fn open_accessibility_settings() {
+    let _ = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        .spawn();
+}
+
+/// Show a native alert explaining the user must toggle Accessibility off/on.
+#[cfg(target_os = "macos")]
+fn show_stale_accessibility_alert() {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2_foundation::NSString;
+
+    unsafe {
+        let cls = AnyClass::get("NSAlert").unwrap();
+        let alert: *mut AnyObject = msg_send![cls, new];
+        let msg = NSString::from_str(
+            "HearYe needs Accessibility permission re-granted after updating."
+        );
+        let info = NSString::from_str(
+            "macOS invalidated the permission because the app binary changed.\n\n\
+             In the System Settings window that opens:\n\
+             1. Find \"HearYe\" in the list\n\
+             2. Toggle it OFF\n\
+             3. Toggle it back ON\n\
+             4. Restart HearYe"
+        );
+        let btn = NSString::from_str("Open System Settings");
+        let _: () = msg_send![alert, setMessageText: &*msg];
+        let _: () = msg_send![alert, setInformativeText: &*info];
+        let _: () = msg_send![alert, addButtonWithTitle: &*btn];
+        let _: i64 = msg_send![alert, runModal];
+    }
+    open_accessibility_settings();
 }
 
 #[cfg(target_os = "macos")]
@@ -369,9 +396,8 @@ fn setup_escape_tap(app: &AppHandle) {
 
     let Ok(tap) = tap else {
         if check_accessibility_inner(false) {
-            log::warn!("CGEventTap creation failed despite AXIsProcessTrusted=true — stale TCC entry, resetting");
-            reset_accessibility_tcc();
-            check_accessibility();
+            log::warn!("CGEventTap creation failed despite AXIsProcessTrusted=true — stale TCC entry after update");
+            show_stale_accessibility_alert();
         } else {
             log::warn!("could not create CGEventTap for Escape — Accessibility permission not granted");
         }
@@ -472,11 +498,6 @@ fn suspend_hotkeys(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-fn prepare_update_relaunch() {
-    #[cfg(target_os = "macos")]
-    reset_accessibility_tcc();
-}
 
 #[tauri::command]
 fn has_api_key(name: String) -> Result<bool, String> {
@@ -515,8 +536,7 @@ pub fn run() {
             open_settings,
             suspend_hotkeys,
             has_api_key,
-            set_api_key,
-            prepare_update_relaunch
+            set_api_key
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
