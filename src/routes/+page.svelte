@@ -449,31 +449,31 @@
   main {
     max-width: 520px;
     margin: 0 auto;
-    padding: 24px;
+    padding: 16px 24px;
   }
   h1 {
-    margin: 0 0 4px;
-    font-size: 22px;
+    margin: 0 0 2px;
+    font-size: 18px;
   }
   .sub {
-    margin: 0 0 20px;
+    margin: 0 0 12px;
     color: #9aa0a6;
-    font-size: 13px;
+    font-size: 12px;
   }
   section {
-    margin-bottom: 22px;
+    margin-bottom: 14px;
   }
   h2 {
-    font-size: 13px;
+    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: #9aa0a6;
-    margin: 0 0 8px;
+    margin: 0 0 4px;
   }
   label {
     display: block;
-    margin-bottom: 10px;
-    font-size: 13px;
+    margin-bottom: 6px;
+    font-size: 12px;
   }
   label.row {
     display: flex;
@@ -484,18 +484,18 @@
     display: flex;
     gap: 8px;
     align-items: center;
-    margin-top: 4px;
+    margin-top: 2px;
   }
   select {
     flex: 1;
     background: #1a1c20;
     border: 1px solid #2a2d33;
     color: #e8e8ec;
-    padding: 8px 10px;
+    padding: 5px 10px;
     border-radius: 6px;
-    font-size: 13px;
+    font-size: 12px;
     box-sizing: border-box;
-    height: 36px;
+    height: 30px;
     appearance: none;
     -webkit-appearance: none;
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%239aa0a6' d='M0 0l5 6 5-6z'/></svg>");
@@ -511,15 +511,15 @@
     background: transparent;
     border: 1px solid #2a2d33;
     color: #e8e8ec;
-    padding: 8px 12px;
-    font-size: 12px;
+    padding: 5px 10px;
+    font-size: 11px;
   }
   button.ghost:hover {
     background: #1a1c20;
   }
   .hotkey-input {
     position: relative;
-    margin-top: 4px;
+    margin-top: 2px;
   }
   .hotkey-input input {
     margin-top: 0;
@@ -559,19 +559,19 @@
   input[type="password"] {
     display: block;
     width: 100%;
-    margin-top: 4px;
+    margin-top: 2px;
     background: #1a1c20;
     border: 1px solid #2a2d33;
     color: #e8e8ec;
-    padding: 8px 10px;
+    padding: 5px 10px;
     border-radius: 6px;
-    font-size: 13px;
+    font-size: 12px;
     box-sizing: border-box;
   }
   .hint {
     color: #6b7280;
-    font-size: 12px;
-    margin: 4px 0 0;
+    font-size: 11px;
+    margin: 2px 0 0;
   }
   code {
     background: #1a1c20;
@@ -582,15 +582,15 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-top: 8px;
+    margin-top: 6px;
   }
   button {
     background: #4f46e5;
     color: white;
     border: none;
-    padding: 8px 16px;
+    padding: 6px 14px;
     border-radius: 6px;
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
   }
   button:hover {
@@ -610,7 +610,7 @@
     z-index: 100;
     background: #1c1a2e;
     border-bottom: 1px solid #4f46e5;
-    padding: 12px 24px;
+    padding: 8px 24px;
     display: flex;
     align-items: center;
     justify-content: space-between;
