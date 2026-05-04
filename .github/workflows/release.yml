@@ -60,18 +60,23 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
           BUNDLE_DIR="src-tauri/target/universal-apple-darwin/release/bundle"
+          echo "--- Bundle directory contents ---"
+          find "$BUNDLE_DIR" -type f 2>/dev/null || echo "(bundle dir not found)"
 
           DMG=$(find "$BUNDLE_DIR" -name '*.dmg' | head -1)
+          if [ -z "$DMG" ]; then echo "ERROR: no .dmg found"; exit 1; fi
           DMG_NAME="HearYe_${VERSION}_universal.dmg"
           cp "$DMG" "$DMG_NAME"
           echo "dmg=${DMG_NAME}" >> "$GITHUB_OUTPUT"
 
           TARGZ=$(find "$BUNDLE_DIR" -name '*.tar.gz' ! -name '*.sig' | head -1)
+          if [ -z "$TARGZ" ]; then echo "ERROR: no .tar.gz found"; exit 1; fi
           TARGZ_NAME="HearYe.app.tar.gz"
           cp "$TARGZ" "$TARGZ_NAME"
           echo "targz=${TARGZ_NAME}" >> "$GITHUB_OUTPUT"
 
           SIG=$(find "$BUNDLE_DIR" -name '*.tar.gz.sig' | head -1)
+          if [ -z "$SIG" ]; then echo "ERROR: no .sig found — signing may not have run"; exit 1; fi
           SIGNATURE=$(cat "$SIG")
           echo "signature=${SIGNATURE}" >> "$GITHUB_OUTPUT"
 
