@@ -167,7 +167,25 @@
 </script>
 
 <div class="pill {overlaySize}">
-  <canvas bind:this={canvas}></canvas>
+  {#if overlaySize === "large"}
+    <div class="large-content">
+      <canvas bind:this={canvas}></canvas>
+      <div class="info">
+        <span class="phase-label">
+          {#if phase === "recording"}Recording…
+          {:else if phase === "transcribing"}Transcribing…
+          {:else if phase === "cleaning"}Cleaning up…
+          {:else if phase === "downloading-model"}Downloading model…
+          {:else if phase === "loading-model"}Loading model…
+          {:else}Ready
+          {/if}
+        </span>
+        <span class="hint">Esc to cancel</span>
+      </div>
+    </div>
+  {:else}
+    <canvas bind:this={canvas}></canvas>
+  {/if}
   {#if overlaySize !== "small"}
     <button
       class="cancel"
@@ -179,21 +197,6 @@
     </button>
   {/if}
 </div>
-
-{#if overlaySize === "large"}
-  <div class="info">
-    <span class="phase-label">
-      {#if phase === "recording"}Recording…
-      {:else if phase === "transcribing"}Transcribing…
-      {:else if phase === "cleaning"}Cleaning up…
-      {:else if phase === "downloading-model"}Downloading model…
-      {:else if phase === "loading-model"}Loading model…
-      {:else}Ready
-      {/if}
-    </span>
-    <span class="hint">Esc to cancel</span>
-  </div>
-{/if}
 
 <style>
   :global(html),
@@ -231,8 +234,14 @@
   }
   .pill.large {
     padding: 12px 16px 12px 20px;
-    height: 56px;
+    height: auto;
     border-radius: 16px;
+  }
+  .large-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
   }
   canvas {
     width: 220px;
@@ -252,8 +261,6 @@
     justify-content: center;
     align-items: center;
     gap: 16px;
-    margin-top: 10px;
-    pointer-events: none;
   }
   .phase-label {
     color: rgba(255, 255, 255, 0.7);
