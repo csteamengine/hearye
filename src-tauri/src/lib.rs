@@ -180,7 +180,11 @@ fn finish_cleanup(app: &AppHandle, _state: &Arc<AppState>) {
 
 fn show_overlay(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("overlay") {
-        position_overlay_top_center(&w);
+        let cfg = settings::Settings::load(app);
+        let (logical_w, logical_h) = overlay_dimensions(&cfg.overlay_size);
+        let _ = w.set_size(tauri::LogicalSize::new(logical_w, logical_h));
+        let _ = app.emit("hearye://overlay-size", cfg.overlay_size.as_str());
+        position_overlay(app, &w);
         #[cfg(target_os = "macos")]
         apply_overlay_window_level(&w);
         let _ = w.show();
@@ -189,6 +193,14 @@ fn show_overlay(app: &AppHandle) {
             force_display(&w);
             order_front_regardless(&w);
         }
+    }
+}
+
+fn overlay_dimensions(size: &str) -> (f64, f64) {
+    match size {
+        "small" => (180.0, 48.0),
+        "large" => (420.0, 160.0),
+        _ => (360.0, 120.0), // medium (default)
     }
 }
 
@@ -225,11 +237,8 @@ fn order_front_regardless(window: &tauri::WebviewWindow) {
     });
 }
 
-fn position_overlay_top_center(w: &tauri::WebviewWindow) {
-    // Place the pill near the top of the screen the user is currently on.
-    // Prefer the monitor under the cursor so the overlay follows the active
-    // display (and its active Space, including fullscreen apps) instead of
-    // sticking to wherever the hidden window last sat.
+fn position_overlay(app: &AppHandle, w: &tauri::WebviewWindow) {
+    let cfg = settings::Settings::load(app);
     let monitor = w
         .cursor_position()
         .ok()
@@ -242,14 +251,14 @@ fn position_overlay_top_center(w: &tauri::WebviewWindow) {
     let scale = monitor.scale_factor();
     let mon_size = monitor.size();
     let mon_pos = monitor.position();
-    // Use the configured logical width so we don't depend on outer_size()
-    // being settled before first show.
-    let logical_w = 360.0_f64;
-    let logical_y = 32.0_f64;
+    let (logical_w, logical_h) = overlay_dimensions(&cfg.overlay_size);
     let physical_w = (logical_w * scale) as i32;
-    let physical_y = (logical_y * scale) as i32;
+    let physical_h = (logical_h * scale) as i32;
     let x = mon_pos.x + ((mon_size.width as i32) - physical_w) / 2;
-    let y = mon_pos.y + physical_y;
+    let y = match cfg.overlay_position.as_str() {
+        "bottom" => mon_pos.y + (mon_size.height as i32) - physical_h - (32.0 * scale) as i32,
+        _ => mon_pos.y + (32.0 * scale) as i32, // top (default)
+    };
     let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
@@ -544,7 +553,9 @@ pub fn run() {
                 let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
                 disable_app_nap();
                 configure_overlay_window(app.handle());
+                configure_settings_vibrancy(app.handle());
                 setup_escape_tap(app.handle());
+                setup_wake_listener(app.handle());
             }
             build_tray(app.handle())?;
             // Show settings only on the very first launch (before user has saved anything).
@@ -562,15 +573,12 @@ pub fn run() {
                     let _ = w.hide();
                 }
             }
-            // Hide settings instead of closing it so the app keeps running in the tray.
-            // We emit an event so the frontend can show a confirmation dialog
-            // if there are unsaved changes before hiding.
             if let Some(w) = app.get_webview_window("settings") {
-                let w_clone = w.clone();
+                let app_handle = app.handle().clone();
                 w.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
-                        let _ = w_clone.emit("hearye://close-requested", ());
+                        hide_settings(app_handle.clone());
                     }
                 });
             }
@@ -628,6 +636,56 @@ fn configure_overlay_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("overlay") {
         apply_overlay_window_level(&window);
     }
+}
+
+#[cfg(target_os = "macos")]
+fn configure_settings_vibrancy(app: &AppHandle) {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject};
+
+    let Some(window) = app.get_webview_window("settings") else { return };
+    let Ok(ns_window) = window.ns_window() else { return };
+    let ns_window = ns_window as *mut AnyObject;
+    unsafe {
+        let _: () = msg_send![ns_window, setTitlebarAppearsTransparent: true];
+        let content_view: *mut AnyObject = msg_send![ns_window, contentView];
+        let superview: *mut AnyObject = msg_send![content_view, superview];
+        if !superview.is_null() {
+            let cls = AnyClass::get("NSVisualEffectView").unwrap();
+            let effect_view: *mut AnyObject = msg_send![cls, new];
+            // NSVisualEffectMaterialHUDWindow = 13
+            let _: () = msg_send![effect_view, setMaterial: 13i64];
+            // NSVisualEffectBlendingModeBehindWindow = 0
+            let _: () = msg_send![effect_view, setBlendingMode: 0i64];
+            // NSVisualEffectStateActive = 1
+            let _: () = msg_send![effect_view, setState: 1i64];
+            // NSViewWidthSizable | NSViewHeightSizable = 2 | 16 = 18
+            let _: () = msg_send![effect_view, setAutoresizingMask: 18u64];
+            let _: () = msg_send![superview, addSubview: effect_view positioned: 1i64 /* below */ relativeTo: content_view];
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn setup_wake_listener(app: &AppHandle) {
+    let app_clone = app.clone();
+    std::thread::spawn(move || {
+        loop {
+            let before = std::time::Instant::now();
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            let elapsed = before.elapsed();
+            if elapsed > std::time::Duration::from_secs(15) {
+                log::info!(
+                    "detected system wake (slept {}s instead of 10s) — re-registering shortcuts",
+                    elapsed.as_secs()
+                );
+                if let Err(e) = register_shortcuts(&app_clone) {
+                    log::warn!("failed to re-register shortcuts after wake: {e}");
+                }
+                reenable_tap();
+            }
+        }
+    });
 }
 
 #[cfg(target_os = "macos")]

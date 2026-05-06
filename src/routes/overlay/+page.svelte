@@ -11,6 +11,10 @@
     | "downloading-model"
     | "loading-model";
 
+  type OverlaySize = "small" | "medium" | "large";
+
+  let overlaySize = $state<OverlaySize>("medium");
+
   const NUM_BARS = 36;
   const BAR_WIDTH = 3;
   const BAR_GAP = 2;
@@ -133,6 +137,11 @@
       await listen<number>("hearye://level", (e) => pushLevel(e.payload)),
     );
     unlisteners.push(
+      await listen<string>("hearye://overlay-size", (e) => {
+        overlaySize = (e.payload as OverlaySize) || "medium";
+      }),
+    );
+    unlisteners.push(
       await listen<string>("hearye://state", (e) => {
         const newPhase = e.payload as Phase;
         if (newPhase === "recording" || newPhase === "idle") {
@@ -157,17 +166,34 @@
   });
 </script>
 
-<div class="pill">
+<div class="pill {overlaySize}">
   <canvas bind:this={canvas}></canvas>
-  <button
-    class="cancel"
-    title="Cancel (Esc)"
-    aria-label="Cancel"
-    onclick={() => invoke("cancel_recording")}
-  >
-    ×
-  </button>
+  {#if overlaySize !== "small"}
+    <button
+      class="cancel"
+      title="Cancel (Esc)"
+      aria-label="Cancel"
+      onclick={() => invoke("cancel_recording")}
+    >
+      ×
+    </button>
+  {/if}
 </div>
+
+{#if overlaySize === "large"}
+  <div class="info">
+    <span class="phase-label">
+      {#if phase === "recording"}Recording…
+      {:else if phase === "transcribing"}Transcribing…
+      {:else if phase === "cleaning"}Cleaning up…
+      {:else if phase === "downloading-model"}Downloading model…
+      {:else if phase === "loading-model"}Loading model…
+      {:else}Ready
+      {/if}
+    </span>
+    <span class="hint">Esc to cancel</span>
+  </div>
+{/if}
 
 <style>
   :global(html),
@@ -192,15 +218,53 @@
     border-radius: 14px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
     width: max-content;
-    margin: 36px auto;
+    margin: 36px auto 0;
     height: 48px;
     box-sizing: border-box;
     pointer-events: auto;
+  }
+  .pill.small {
+    padding: 6px 10px;
+    height: 32px;
+    border-radius: 10px;
+    margin-top: 8px;
+  }
+  .pill.large {
+    padding: 12px 16px 12px 20px;
+    height: 56px;
+    border-radius: 16px;
   }
   canvas {
     width: 220px;
     height: 36px;
     display: block;
+  }
+  .pill.small canvas {
+    width: 140px;
+    height: 20px;
+  }
+  .pill.large canvas {
+    width: 260px;
+    height: 40px;
+  }
+  .info {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 16px;
+    margin-top: 10px;
+    pointer-events: none;
+  }
+  .phase-label {
+    color: rgba(255, 255, 255, 0.7);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .hint {
+    color: rgba(255, 255, 255, 0.35);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    font-size: 11px;
   }
   .cancel {
     background: transparent;

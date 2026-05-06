@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getVersion } from "@tauri-apps/api/app";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -9,6 +9,7 @@
   const STORE_FILE = "settings.json";
 
   let store: Store | null = null;
+  let ready = $state(false);
   let engine = $state<"native" | "groq">("native");
   let groqKey = $state("");
   let anthropicKey = $state("");
@@ -21,7 +22,6 @@
   let haikuModel = $state("claude-haiku-4-5-20251001");
   let inputDevice = $state(""); // "" means system default
   let devices = $state<string[]>([]);
-  let savedNotice = $state("");
   let hotkeyError = $state("");
   let appVersion = $state("");
   let updateStatus = $state("");
@@ -29,20 +29,8 @@
   let availableUpdate = $state<Update | null>(null);
   let installing = $state(false);
   let recording = $state<null | "toggle" | "ptt">(null);
-  let showCloseConfirm = $state(false);
-
-  let saved = {
-    engine: "native", aiCleanup: false, toggleHotkey: "Cmd+Shift+Space",
-    pttHotkey: "F18", whisperModel: "whisper-large-v3-turbo",
-    haikuModel: "claude-haiku-4-5-20251001", inputDevice: "",
-  };
-
-  let dirty = $derived(
-    engine !== saved.engine || aiCleanup !== saved.aiCleanup ||
-    toggleHotkey !== saved.toggleHotkey || pttHotkey !== saved.pttHotkey ||
-    whisperModel !== saved.whisperModel || haikuModel !== saved.haikuModel ||
-    inputDevice !== saved.inputDevice || !!groqKey || !!anthropicKey
-  );
+  let overlaySize = $state("medium");
+  let overlayPosition = $state("top");
 
   let unlisten: UnlistenFn | null = null;
 
@@ -57,39 +45,61 @@
     whisperModel = (await store.get<string>("whisper_model")) ?? whisperModel;
     haikuModel = (await store.get<string>("haiku_model")) ?? haikuModel;
     inputDevice = (await store.get<string>("input_device")) ?? "";
+    overlaySize = (await store.get<string>("overlay_size")) ?? "medium";
+    overlayPosition = (await store.get<string>("overlay_position")) ?? "top";
     devices = await invoke<string[]>("list_input_devices");
     appVersion = await getVersion();
-    snapshotSaved();
+
+    await tick();
+    ready = true;
 
     unlisten = await listen("hearye://close-requested", () => {
-      if (dirty) {
-        showCloseConfirm = true;
-      } else {
-        invoke("hide_settings");
-      }
+      invoke("hide_settings");
     });
   });
 
   onDestroy(() => unlisten?.());
 
-  async function saveAndClose() {
-    await save();
-    showCloseConfirm = false;
-    invoke("hide_settings");
+  $effect(() => {
+    if (!ready || !store) return;
+    // Touch all reactive values so this effect re-runs when any change.
+    const _ = [engine, aiCleanup, toggleHotkey, pttHotkey, whisperModel,
+               haikuModel, inputDevice, overlaySize, overlayPosition];
+    void _;
+    persistSettings();
+  });
+
+  async function persistSettings() {
+    if (!store) return;
+    await store.set("engine", engine);
+    await store.set("initialized", true);
+    await store.set("ai_cleanup_enabled", aiCleanup);
+    await store.set("toggle_hotkey", toggleHotkey);
+    await store.set("ptt_hotkey", pttHotkey);
+    await store.set("whisper_model", whisperModel);
+    await store.set("haiku_model", haikuModel);
+    await store.set("input_device", inputDevice);
+    await store.set("overlay_size", overlaySize);
+    await store.set("overlay_position", overlayPosition);
+    await store.save();
+    hotkeyError = "";
+    try {
+      await invoke("reload_hotkeys");
+    } catch (e) {
+      hotkeyError = String(e);
+    }
   }
 
-  function discardAndClose() {
-    engine = saved.engine as "native" | "groq";
-    aiCleanup = saved.aiCleanup;
-    toggleHotkey = saved.toggleHotkey;
-    pttHotkey = saved.pttHotkey;
-    whisperModel = saved.whisperModel;
-    haikuModel = saved.haikuModel;
-    inputDevice = saved.inputDevice;
-    groqKey = "";
-    anthropicKey = "";
-    showCloseConfirm = false;
-    invoke("hide_settings");
+  async function saveApiKey(name: "groq_api_key" | "anthropic_api_key") {
+    if (name === "groq_api_key" && groqKey) {
+      await invoke("set_api_key", { name, value: groqKey });
+      groqStored = true;
+      groqKey = "";
+    } else if (name === "anthropic_api_key" && anthropicKey) {
+      await invoke("set_api_key", { name, value: anthropicKey });
+      anthropicStored = true;
+      anthropicKey = "";
+    }
   }
 
   async function checkForUpdates() {
@@ -132,19 +142,11 @@
     }
   }
 
-  function snapshotSaved() {
-    saved = {
-      engine, aiCleanup, toggleHotkey, pttHotkey,
-      whisperModel, haikuModel, inputDevice,
-    };
-  }
-
   async function refreshDevices() {
     devices = await invoke<string[]>("list_input_devices");
   }
 
   function eventToShortcut(e: KeyboardEvent): string | null {
-    // Bare modifier presses don't form a shortcut by themselves.
     const modifierOnly = ["Meta", "Control", "Alt", "Shift"].includes(e.key);
     const code = e.code;
 
@@ -188,13 +190,10 @@
     e.preventDefault();
     e.stopPropagation();
     if (recording === which) {
-      // toggle off — restore the saved value
       recording = null;
       await invoke("reload_hotkeys").catch(() => {});
       return;
     }
-    // Suspend the global shortcut listener so the user can re-press an existing
-    // hotkey without it firing the recording action.
     await invoke("suspend_hotkeys").catch(() => {});
     if (which === "toggle") toggleHotkey = "";
     else pttHotkey = "";
@@ -203,7 +202,6 @@
 
   async function endRecord() {
     recording = null;
-    // Re-register whatever is currently saved (or whatever the user just typed).
     await invoke("reload_hotkeys").catch(() => {});
   }
 
@@ -212,12 +210,11 @@
     e.preventDefault();
     e.stopPropagation();
     if (e.key === "Escape") {
-      // Cancel — leave the field as-is (empty if user just clicked record).
       await endRecord();
       return;
     }
     const shortcut = eventToShortcut(e);
-    if (!shortcut) return; // wait for the non-modifier key
+    if (!shortcut) return;
     if (recording === "toggle") toggleHotkey = shortcut;
     else pttHotkey = shortcut;
     await endRecord();
@@ -233,50 +230,7 @@
       anthropicStored = false;
     }
   }
-
-  async function save() {
-    if (!store) return;
-    await store.set("engine", engine);
-    await store.set("initialized", true);
-    if (groqKey) {
-      await invoke("set_api_key", { name: "groq_api_key", value: groqKey });
-      groqStored = true;
-      groqKey = "";
-    }
-    if (anthropicKey) {
-      await invoke("set_api_key", { name: "anthropic_api_key", value: anthropicKey });
-      anthropicStored = true;
-      anthropicKey = "";
-    }
-    await store.set("ai_cleanup_enabled", aiCleanup);
-    await store.set("toggle_hotkey", toggleHotkey);
-    await store.set("ptt_hotkey", pttHotkey);
-    await store.set("whisper_model", whisperModel);
-    await store.set("haiku_model", haikuModel);
-    await store.set("input_device", inputDevice);
-    await store.save();
-    hotkeyError = "";
-    try {
-      await invoke("reload_hotkeys");
-    } catch (e) {
-      hotkeyError = String(e);
-    }
-    snapshotSaved();
-    savedNotice = "Saved.";
-    setTimeout(() => (savedNotice = ""), 1500);
-  }
 </script>
-
-{#if showCloseConfirm}
-  <div class="close-confirm">
-    <span>You have unsaved changes.</span>
-    <div class="close-confirm-actions">
-      <button type="button" class="ghost" onclick={discardAndClose}>Discard</button>
-      <button type="button" onclick={saveAndClose}>Save & close</button>
-      <button type="button" class="ghost" onclick={() => (showCloseConfirm = false)}>Cancel</button>
-    </div>
-  </div>
-{/if}
 
 <main>
   <h1>HearYe</h1>
@@ -286,10 +240,12 @@
     <h2>Transcription</h2>
     <label>
       Engine
-      <select bind:value={engine}>
-        <option value="native">Local Whisper — offline, free</option>
-        <option value="groq">Groq Whisper — cloud, needs API key</option>
-      </select>
+      <div class="row gap">
+        <select bind:value={engine}>
+          <option value="native">Local Whisper — offline, free</option>
+          <option value="groq">Groq Whisper — cloud, needs API key</option>
+        </select>
+      </div>
     </label>
     {#if engine === "native"}
       <p class="hint">
@@ -305,6 +261,7 @@
             bind:value={groqKey}
             placeholder={groqStored ? "•••••••• (stored in Keychain)" : "gsk_..."}
             autocomplete="off"
+            onblur={() => saveApiKey("groq_api_key")}
           />
           {#if groqStored}
             <button type="button" class="ghost" onclick={() => clearKey("groq_api_key")}>Clear</button>
@@ -379,6 +336,29 @@
   </section>
 
   <section>
+    <h2>Overlay</h2>
+    <label>
+      Size
+      <div class="row gap">
+        <select bind:value={overlaySize}>
+          <option value="small">Small — minimal indicator, no controls</option>
+          <option value="medium">Medium — waveform + cancel button</option>
+          <option value="large">Large — waveform, status, and hotkey hints</option>
+        </select>
+      </div>
+    </label>
+    <label>
+      Position
+      <div class="row gap">
+        <select bind:value={overlayPosition}>
+          <option value="top">Top of screen</option>
+          <option value="bottom">Bottom of screen</option>
+        </select>
+      </div>
+    </label>
+  </section>
+
+  <section>
     <h2>AI cleanup</h2>
     <label class="row">
       <input type="checkbox" bind:checked={aiCleanup} />
@@ -393,6 +373,7 @@
             bind:value={anthropicKey}
             placeholder={anthropicStored ? "•••••••• (stored in Keychain)" : "sk-ant-..."}
             autocomplete="off"
+            onblur={() => saveApiKey("anthropic_api_key")}
           />
           {#if anthropicStored}
             <button type="button" class="ghost" onclick={() => clearKey("anthropic_api_key")}>Clear</button>
@@ -405,7 +386,7 @@
       </label>
     {/if}
     <p class="hint">
-      Keys are stored in the macOS Keychain. Leave a key blank when saving to keep the existing value.
+      Keys are stored in the macOS Keychain. API keys are saved when you leave the field.
     </p>
   </section>
 
@@ -426,18 +407,13 @@
       <p class="hint">{updateStatus}</p>
     {/if}
   </section>
-
-  <div class="footer">
-    <button onclick={save}>Save</button>
-    <span class="ok">{savedNotice}</span>
-  </div>
 </main>
 
 <svelte:window onkeydown={onRecordKeydown} />
 
 <style>
   :global(body) {
-    background: #0e0f12;
+    background: transparent;
     color: #e8e8ec;
     font-family:
       -apple-system,
@@ -449,7 +425,7 @@
   main {
     max-width: 520px;
     margin: 0 auto;
-    padding: 16px 24px;
+    padding: 32px 24px 16px;
   }
   h1 {
     margin: 0 0 2px;
@@ -488,8 +464,8 @@
   }
   select {
     flex: 1;
-    background: #1a1c20;
-    border: 1px solid #2a2d33;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     color: #e8e8ec;
     padding: 5px 10px;
     border-radius: 6px;
@@ -505,17 +481,19 @@
   }
   select:focus {
     outline: none;
-    border-color: #4f46e5;
+    border-color: rgba(99, 102, 241, 0.5);
   }
   button.ghost {
-    background: transparent;
-    border: 1px solid #2a2d33;
-    color: #e8e8ec;
-    padding: 5px 10px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #c0c4cc;
+    padding: 5px 12px;
     font-size: 11px;
   }
   button.ghost:hover {
-    background: #1a1c20;
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.15);
+    color: #e8e8ec;
   }
   .hotkey-input {
     position: relative;
@@ -560,13 +538,18 @@
     display: block;
     width: 100%;
     margin-top: 2px;
-    background: #1a1c20;
-    border: 1px solid #2a2d33;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     color: #e8e8ec;
     padding: 5px 10px;
     border-radius: 6px;
     font-size: 12px;
     box-sizing: border-box;
+  }
+  input[type="text"]:focus,
+  input[type="password"]:focus {
+    outline: none;
+    border-color: rgba(99, 102, 241, 0.5);
   }
   .hint {
     color: #6b7280;
@@ -574,52 +557,28 @@
     margin: 2px 0 0;
   }
   code {
-    background: #1a1c20;
+    background: rgba(255, 255, 255, 0.08);
     padding: 1px 5px;
     border-radius: 3px;
   }
-  .footer {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-top: 6px;
-  }
   button {
-    background: #4f46e5;
-    color: white;
-    border: none;
+    background: rgba(79, 70, 229, 0.35);
+    color: #c7c3ff;
+    border: 1px solid rgba(99, 102, 241, 0.3);
     padding: 6px 14px;
     border-radius: 6px;
     font-size: 12px;
     cursor: pointer;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
   }
   button:hover {
-    background: #6366f1;
-  }
-  .ok {
-    color: #34d399;
-    font-size: 12px;
+    background: rgba(79, 70, 229, 0.5);
+    border-color: rgba(99, 102, 241, 0.45);
+    color: #e0deff;
   }
   .err {
     color: #f87171;
     font-size: 12px;
-  }
-  .close-confirm {
-    position: sticky;
-    top: 0;
-    z-index: 100;
-    background: #1c1a2e;
-    border-bottom: 1px solid #4f46e5;
-    padding: 8px 24px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    font-size: 13px;
-  }
-  .close-confirm-actions {
-    display: flex;
-    gap: 8px;
-    flex-shrink: 0;
   }
 </style>

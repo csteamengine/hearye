@@ -15,6 +15,8 @@ pub const KEY_HAIKU_MODEL: &str = "haiku_model";
 pub const KEY_INPUT_DEVICE: &str = "input_device";
 pub const KEY_ENGINE: &str = "engine";
 pub const KEY_INITIALIZED: &str = "initialized";
+pub const KEY_OVERLAY_SIZE: &str = "overlay_size";
+pub const KEY_OVERLAY_POSITION: &str = "overlay_position";
 
 pub const DEFAULT_TOGGLE_HOTKEY: &str = "Cmd+Shift+Space";
 pub const DEFAULT_PTT_HOTKEY: &str = "F18";
@@ -33,6 +35,8 @@ pub struct Settings {
     pub haiku_model: Option<String>,
     pub input_device: Option<String>,
     pub initialized: bool,
+    pub overlay_size: String,
+    pub overlay_position: String,
 }
 
 impl Default for Settings {
@@ -48,6 +52,8 @@ impl Default for Settings {
             haiku_model: None,
             input_device: None,
             initialized: false,
+            overlay_size: "medium".into(),
+            overlay_position: "top".into(),
         }
     }
 }
@@ -101,6 +107,12 @@ impl Settings {
             .get(KEY_INITIALIZED)
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        if let Some(v) = store.get(KEY_OVERLAY_SIZE).and_then(|v| v.as_str().map(str::to_owned)) {
+            s.overlay_size = v;
+        }
+        if let Some(v) = store.get(KEY_OVERLAY_POSITION).and_then(|v| v.as_str().map(str::to_owned)) {
+            s.overlay_position = v;
+        }
         s
     }
 }
