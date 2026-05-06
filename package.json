@@ -1,6 +1,6 @@
 {
   "name": "hearye",
-  "version": "0.1.18",
+  "version": "0.1.23",
   "description": "Free dictation app — Whisper + optional Claude cleanup, paste anywhere",
   "type": "module",
   "scripts": {
