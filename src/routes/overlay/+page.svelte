@@ -117,17 +117,19 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    const totalWidth = NUM_BARS * BAR_WIDTH + (NUM_BARS - 1) * BAR_GAP;
-    const startX = (w - totalWidth) / 2;
+    const pad = 4;
+    const available = w - pad * 2;
+    const barW = Math.max(BAR_WIDTH, (available - (NUM_BARS - 1) * BAR_GAP) / NUM_BARS);
+    const step = (available - barW) / (NUM_BARS - 1);
     ctx.fillStyle = colorFor(phase);
 
     for (let i = 0; i < NUM_BARS; i++) {
       const v = display[i];
       const barH = Math.max(2, v * MAX_HEIGHT);
-      const x = startX + i * (BAR_WIDTH + BAR_GAP);
+      const x = pad + i * step;
       const y = (h - barH) / 2;
       ctx.beginPath();
-      ctx.roundRect(x, y, BAR_WIDTH, barH, BAR_RADIUS);
+      ctx.roundRect(x, y, barW, barH, BAR_RADIUS);
       ctx.fill();
     }
   }
@@ -168,33 +170,41 @@
 
 <div class="pill {overlaySize}">
   {#if overlaySize === "large"}
-    <div class="large-content">
+    <div class="large-top">
       <canvas bind:this={canvas}></canvas>
-      <div class="info">
-        <span class="phase-label">
-          {#if phase === "recording"}Recording…
-          {:else if phase === "transcribing"}Transcribing…
-          {:else if phase === "cleaning"}Cleaning up…
-          {:else if phase === "downloading-model"}Downloading model…
-          {:else if phase === "loading-model"}Loading model…
-          {:else}Ready
-          {/if}
-        </span>
-        <span class="hint">Esc to cancel</span>
-      </div>
+      <button
+        class="cancel"
+        title="Cancel (Esc)"
+        aria-label="Cancel"
+        onclick={() => invoke("cancel_recording")}
+      >
+        ×
+      </button>
+    </div>
+    <div class="large-bottom">
+      <span class="phase-label">
+        {#if phase === "recording"}Recording…
+        {:else if phase === "transcribing"}Transcribing…
+        {:else if phase === "cleaning"}Cleaning up…
+        {:else if phase === "downloading-model"}Downloading model…
+        {:else if phase === "loading-model"}Loading model…
+        {:else}Ready
+        {/if}
+      </span>
+      <span class="hint">Esc to cancel</span>
     </div>
   {:else}
     <canvas bind:this={canvas}></canvas>
-  {/if}
-  {#if overlaySize !== "small"}
-    <button
-      class="cancel"
-      title="Cancel (Esc)"
-      aria-label="Cancel"
-      onclick={() => invoke("cancel_recording")}
-    >
-      ×
-    </button>
+    {#if overlaySize !== "small"}
+      <button
+        class="cancel"
+        title="Cancel (Esc)"
+        aria-label="Cancel"
+        onclick={() => invoke("cancel_recording")}
+      >
+        ×
+      </button>
+    {/if}
   {/if}
 </div>
 
@@ -233,15 +243,30 @@
     margin-top: 8px;
   }
   .pill.large {
-    padding: 12px 16px 12px 20px;
-    height: auto;
-    border-radius: 16px;
-  }
-  .large-content {
-    display: flex;
     flex-direction: column;
-    align-items: center;
+    padding: 12px 14px 10px 14px;
+    height: auto;
+    width: auto;
+    margin-left: 24px;
+    margin-right: 24px;
+    border-radius: 16px;
     gap: 6px;
+  }
+  .large-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+  }
+  .large-top canvas {
+    flex: 1;
+    width: auto;
+  }
+  .large-bottom {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    padding: 0 4px;
   }
   canvas {
     width: 220px;
@@ -253,14 +278,7 @@
     height: 20px;
   }
   .pill.large canvas {
-    width: 260px;
     height: 40px;
-  }
-  .info {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 16px;
   }
   .phase-label {
     color: rgba(255, 255, 255, 0.7);

@@ -14,7 +14,7 @@ use anyhow::Result;
 use state::{AppState, Session};
 use std::sync::Arc;
 use tauri::async_runtime::JoinHandle;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu, IsMenuItem, CheckMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
@@ -198,9 +198,9 @@ fn show_overlay(app: &AppHandle) {
 
 fn overlay_dimensions(size: &str) -> (f64, f64) {
     match size {
-        "small" => (180.0, 48.0),
-        "large" => (420.0, 160.0),
-        _ => (360.0, 120.0), // medium (default)
+        "small" => (250.0, 110.0),
+        "large" => (480.0, 200.0),
+        _ => (420.0, 150.0), // medium (default)
     }
 }
 
@@ -592,11 +592,7 @@ pub fn run() {
 }
 
 fn build_tray(app: &AppHandle) -> Result<()> {
-    let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
-    let separator = PredefinedMenuItem::separator(app)?;
-    let quit_item = MenuItem::with_id(app, "quit", "Quit HearYe", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&settings_item, &separator, &quit_item])?;
-
+    let menu = build_tray_menu(app)?;
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?.to_owned();
 
     TrayIconBuilder::with_id("hearye-tray")
@@ -604,13 +600,72 @@ fn build_tray(app: &AppHandle) -> Result<()> {
         .icon_as_template(true)
         .menu(&menu)
         .show_menu_on_left_click(true)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "settings" => show_settings(app),
-            "quit" => app.exit(0),
-            _ => {}
-        })
+        .on_menu_event(|app, event| handle_tray_event(app, &event))
         .build(app)?;
     Ok(())
+}
+
+fn build_tray_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>> {
+    let cfg = settings::Settings::load(app);
+    let current_device = cfg.input_device.unwrap_or_default();
+    let devices = audio::list_devices();
+
+    let mic_submenu = Submenu::with_id(app, "mic-submenu", "Microphone", true)?;
+    let default_item = CheckMenuItem::with_id(
+        app, "mic:", "System default", true, current_device.is_empty(), None::<&str>,
+    )?;
+    mic_submenu.append(&default_item)?;
+    mic_submenu.append(&PredefinedMenuItem::separator(app)?)?;
+    for d in &devices {
+        let checked = d == &current_device;
+        let item = CheckMenuItem::with_id(
+            app, &format!("mic:{d}"), d, true, checked, None::<&str>,
+        )?;
+        mic_submenu.append(&item)?;
+    }
+
+    let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit_item = MenuItem::with_id(app, "quit", "Quit HearYe", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[
+        &mic_submenu as &dyn IsMenuItem<tauri::Wry>,
+        &separator,
+        &settings_item,
+        &PredefinedMenuItem::separator(app)?,
+        &quit_item,
+    ])?;
+    Ok(menu)
+}
+
+fn rebuild_tray_menu(app: &AppHandle) {
+    if let Ok(menu) = build_tray_menu(app) {
+        if let Some(tray) = app.tray_by_id("hearye-tray") {
+            let _ = tray.set_menu(Some(menu));
+        }
+    }
+}
+
+fn handle_tray_event(app: &AppHandle, event: &MenuEvent) {
+    let id = event.id.as_ref();
+    match id {
+        "settings" => show_settings(app),
+        "quit" => app.exit(0),
+        _ if id.starts_with("mic:") => {
+            let device = &id[4..];
+            set_input_device(app, device);
+        }
+        _ => {}
+    }
+}
+
+fn set_input_device(app: &AppHandle, device: &str) {
+    use tauri_plugin_store::StoreExt;
+    if let Ok(store) = app.store(settings::STORE_FILE) {
+        store.set(settings::KEY_INPUT_DEVICE, serde_json::Value::String(device.to_string()));
+        let _ = store.save();
+    }
+    let _ = app.emit("hearye://device-changed", device);
+    rebuild_tray_menu(app);
 }
 
 #[cfg(target_os = "macos")]
@@ -635,6 +690,27 @@ fn disable_app_nap() {
 fn configure_overlay_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("overlay") {
         apply_overlay_window_level(&window);
+        force_transparent_webview(&window);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn force_transparent_webview(window: &tauri::WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    let Ok(ns_window) = window.ns_window() else { return };
+    let ns_window = ns_window as *mut AnyObject;
+    unsafe {
+        let _: () = msg_send![ns_window, setOpaque: false];
+        let content_view: *mut AnyObject = msg_send![ns_window, contentView];
+        if !content_view.is_null() {
+            let _: () = msg_send![content_view, setWantsLayer: true];
+            let layer: *mut AnyObject = msg_send![content_view, layer];
+            if !layer.is_null() {
+                let _: () = msg_send![layer, setOpaque: false];
+            }
+        }
     }
 }
 

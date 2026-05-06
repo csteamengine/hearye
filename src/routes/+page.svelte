@@ -3,6 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { getVersion } from "@tauri-apps/api/app";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import { load, type Store } from "@tauri-apps/plugin-store";
   import { check, type Update } from "@tauri-apps/plugin-updater";
 
@@ -32,7 +33,7 @@
   let overlaySize = $state("medium");
   let overlayPosition = $state("top");
 
-  let unlisten: UnlistenFn | null = null;
+  let unlisteners: UnlistenFn[] = [];
 
   onMount(async () => {
     store = await load(STORE_FILE, { defaults: {}, autoSave: false });
@@ -53,12 +54,20 @@
     await tick();
     ready = true;
 
-    unlisten = await listen("hearye://close-requested", () => {
+    unlisteners.push(await listen("hearye://close-requested", () => {
       invoke("hide_settings");
-    });
+    }));
+
+    unlisteners.push(await listen<string>("hearye://device-changed", (e) => {
+      inputDevice = e.payload;
+    }));
+
+    unlisteners.push(await getCurrentWebviewWindow().onFocusChanged(({ payload: focused }) => {
+      if (focused) refreshDevices();
+    }));
   });
 
-  onDestroy(() => unlisten?.());
+  onDestroy(() => unlisteners.forEach(u => u()));
 
   $effect(() => {
     if (!ready || !store) return;
@@ -284,7 +293,6 @@
           <option value={d}>{d}</option>
         {/each}
       </select>
-      <button type="button" class="ghost" onclick={refreshDevices}>Refresh</button>
     </div>
   </section>
 
