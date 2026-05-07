@@ -602,7 +602,7 @@ fn build_tray(app: &AppHandle) -> Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| handle_tray_event(app, &event))
         .on_tray_icon_event(|tray, event| {
-            if matches!(event, tauri::tray::TrayIconEvent::Click { .. }) {
+            if matches!(event, tauri::tray::TrayIconEvent::Enter { .. }) {
                 rebuild_tray_menu(tray.app_handle());
             }
         })
