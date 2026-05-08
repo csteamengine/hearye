@@ -148,14 +148,23 @@ async fn finish_session(app: AppHandle, state: Arc<AppState>) -> Result<()> {
         text
     };
 
+    // Hide the overlay before pasting so it disappears immediately once
+    // transcription is done, rather than lingering during the clipboard
+    // restore delay.
+    finish_cleanup(&app, &state);
+
     if !final_text.is_empty() {
         #[cfg(target_os = "macos")]
-        paste::paste_text(&final_text, session.focus)?;
+        {
+            let text = final_text.clone();
+            let focus = session.focus;
+            tokio::task::spawn_blocking(move || paste::paste_text(&text, focus))
+                .await??;
+        }
         #[cfg(not(target_os = "macos"))]
         let _ = final_text;
     }
     let _ = app.emit("hearye://state", "idle");
-    finish_cleanup(&app, &state);
     Ok(())
 }
 

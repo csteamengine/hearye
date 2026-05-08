@@ -9,6 +9,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 const TARGET_SR: u32 = 16_000;
+const MAX_SAMPLES: usize = 16_000 * 60 * 10; // 10 minutes at 16kHz
 
 pub fn list_devices() -> Vec<String> {
     let host = cpal::default_host();
@@ -137,9 +138,11 @@ fn handle_block_f32(data: &[f32], channels: usize, pcm: &Mutex<Vec<i16>>, app: &
     let mono = downmix_f32(data, channels);
     let rms = rms_f32(&mono);
     let mut buf = pcm.lock();
-    buf.reserve(mono.len());
-    for s in &mono {
-        buf.push((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16);
+    if buf.len() < MAX_SAMPLES {
+        buf.reserve(mono.len());
+        for s in &mono {
+            buf.push((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16);
+        }
     }
     drop(buf);
     let _ = app.emit("hearye://level", rms);
@@ -148,7 +151,11 @@ fn handle_block_f32(data: &[f32], channels: usize, pcm: &Mutex<Vec<i16>>, app: &
 fn handle_block_i16(data: &[i16], channels: usize, pcm: &Mutex<Vec<i16>>, app: &AppHandle) {
     let mono = downmix_i16(data, channels);
     let rms = rms_i16(&mono);
-    pcm.lock().extend_from_slice(&mono);
+    let mut buf = pcm.lock();
+    if buf.len() < MAX_SAMPLES {
+        buf.extend_from_slice(&mono);
+    }
+    drop(buf);
     let _ = app.emit("hearye://level", rms);
 }
 

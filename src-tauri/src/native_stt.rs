@@ -106,8 +106,12 @@ async fn ensure_model_downloaded(app: &AppHandle) -> Result<PathBuf> {
             bytes.len()
         ));
     }
-    std::fs::write(&override_path, &bytes)?;
-    log(format!("model downloaded ({} bytes)", bytes.len()));
+    let num_bytes = bytes.len();
+    let write_path = override_path.clone();
+    tokio::task::spawn_blocking(move || std::fs::write(&write_path, &bytes))
+        .await
+        .map_err(|e| anyhow!("blocking write task failed: {e}"))??;
+    log(format!("model downloaded ({} bytes)", num_bytes));
     Ok(override_path)
 }
 

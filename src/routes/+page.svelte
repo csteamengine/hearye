@@ -54,7 +54,13 @@
     await tick();
     ready = true;
 
-    unlisteners.push(await listen("hearye://close-requested", () => {
+    unlisteners.push(await listen("hearye://close-requested", async () => {
+      await saveApiKey("groq_api_key");
+      await saveApiKey("anthropic_api_key");
+      if (recording) {
+        recording = null;
+        await invoke("reload_hotkeys").catch(() => {});
+      }
       invoke("hide_settings");
     }));
 

@@ -100,7 +100,11 @@
     }
 
     draw();
-    rafId = requestAnimationFrame(tick);
+    if (phase !== "idle") {
+      rafId = requestAnimationFrame(tick);
+    } else {
+      rafId = 0;
+    }
   }
 
   function draw() {
@@ -157,9 +161,15 @@
         }
         phase = newPhase;
         phaseTime = 0;
+        if (newPhase !== "idle" && !rafId) {
+          lastTime = 0;
+          rafId = requestAnimationFrame(tick);
+        } else if (newPhase === "idle" && rafId) {
+          cancelAnimationFrame(rafId);
+          rafId = 0;
+        }
       }),
     );
-    rafId = requestAnimationFrame(tick);
   });
 
   onDestroy(() => {
