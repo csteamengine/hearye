@@ -11,6 +11,7 @@ pub const KEY_AI_CLEANUP: &str = "ai_cleanup_enabled";
 pub const KEY_TOGGLE_HOTKEY: &str = "toggle_hotkey";
 pub const KEY_PTT_HOTKEY: &str = "ptt_hotkey";
 pub const KEY_WHISPER_MODEL: &str = "whisper_model";
+pub const KEY_NATIVE_WHISPER_MODEL: &str = "native_whisper_model";
 pub const KEY_HAIKU_MODEL: &str = "haiku_model";
 pub const KEY_INPUT_DEVICE: &str = "input_device";
 pub const KEY_ENGINE: &str = "engine";
@@ -32,6 +33,7 @@ pub struct Settings {
     pub toggle_hotkey: String,
     pub ptt_hotkey: String,
     pub whisper_model: Option<String>,
+    pub native_whisper_model: Option<String>,
     pub haiku_model: Option<String>,
     pub input_device: Option<String>,
     pub initialized: bool,
@@ -49,6 +51,7 @@ impl Default for Settings {
             toggle_hotkey: DEFAULT_TOGGLE_HOTKEY.into(),
             ptt_hotkey: DEFAULT_PTT_HOTKEY.into(),
             whisper_model: None,
+            native_whisper_model: None,
             haiku_model: None,
             input_device: None,
             initialized: false,
@@ -95,6 +98,9 @@ impl Settings {
         }
         s.whisper_model = store
             .get(KEY_WHISPER_MODEL)
+            .and_then(|v| v.as_str().map(str::to_owned));
+        s.native_whisper_model = store
+            .get(KEY_NATIVE_WHISPER_MODEL)
             .and_then(|v| v.as_str().map(str::to_owned));
         s.haiku_model = store
             .get(KEY_HAIKU_MODEL)

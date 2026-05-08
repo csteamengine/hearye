@@ -132,7 +132,10 @@ async fn finish_session(app: AppHandle, state: Arc<AppState>) -> Result<()> {
         settings::ENGINE_GROQ => {
             transcribe::transcribe(&cfg.groq_api_key, cfg.whisper_model.as_deref(), wav).await?
         }
-        _ => native_stt::transcribe_wav(app.clone(), wav).await?,
+        _ => {
+            let native_model = cfg.native_whisper_model.clone().unwrap_or_else(|| "base.en".into());
+            native_stt::transcribe_wav(app.clone(), native_model, wav).await?
+        }
     };
 
     let final_text = if cfg.ai_cleanup_enabled && !text.is_empty() {
@@ -148,9 +151,6 @@ async fn finish_session(app: AppHandle, state: Arc<AppState>) -> Result<()> {
         text
     };
 
-    // Hide the overlay before pasting so it disappears immediately once
-    // transcription is done, rather than lingering during the clipboard
-    // restore delay.
     finish_cleanup(&app, &state);
 
     if !final_text.is_empty() {
@@ -651,7 +651,22 @@ fn build_tray_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>> {
     Ok(menu)
 }
 
+static LAST_DEVICE_LIST: std::sync::LazyLock<parking_lot::Mutex<Vec<String>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(Vec::new()));
+
 fn rebuild_tray_menu(app: &AppHandle) {
+    rebuild_tray_menu_inner(app, false);
+}
+
+fn rebuild_tray_menu_inner(app: &AppHandle, force: bool) {
+    let devices = audio::list_devices();
+    if !force {
+        let last = LAST_DEVICE_LIST.lock();
+        if *last == devices {
+            return;
+        }
+    }
+    *LAST_DEVICE_LIST.lock() = devices;
     if let Ok(menu) = build_tray_menu(app) {
         if let Some(tray) = app.tray_by_id("hearye-tray") {
             let _ = tray.set_menu(Some(menu));
@@ -679,7 +694,7 @@ fn set_input_device(app: &AppHandle, device: &str) {
         let _ = store.save();
     }
     let _ = app.emit("hearye://device-changed", device);
-    rebuild_tray_menu(app);
+    rebuild_tray_menu_inner(app, true);
 }
 
 #[cfg(target_os = "macos")]

@@ -20,6 +20,7 @@
   let toggleHotkey = $state("Cmd+Shift+Space");
   let pttHotkey = $state("F18");
   let whisperModel = $state("whisper-large-v3-turbo");
+  let nativeModel = $state("base.en");
   let haikuModel = $state("claude-haiku-4-5-20251001");
   let inputDevice = $state(""); // "" means system default
   let devices = $state<string[]>([]);
@@ -44,6 +45,7 @@
     toggleHotkey = (await store.get<string>("toggle_hotkey")) ?? toggleHotkey;
     pttHotkey = (await store.get<string>("ptt_hotkey")) ?? pttHotkey;
     whisperModel = (await store.get<string>("whisper_model")) ?? whisperModel;
+    nativeModel = (await store.get<string>("native_whisper_model")) ?? nativeModel;
     haikuModel = (await store.get<string>("haiku_model")) ?? haikuModel;
     inputDevice = (await store.get<string>("input_device")) ?? "";
     overlaySize = (await store.get<string>("overlay_size")) ?? "medium";
@@ -79,7 +81,7 @@
     if (!ready || !store) return;
     // Touch all reactive values so this effect re-runs when any change.
     const _ = [engine, aiCleanup, toggleHotkey, pttHotkey, whisperModel,
-               haikuModel, inputDevice, overlaySize, overlayPosition];
+               nativeModel, haikuModel, inputDevice, overlaySize, overlayPosition];
     void _;
     persistSettings();
   });
@@ -92,6 +94,7 @@
     await store.set("toggle_hotkey", toggleHotkey);
     await store.set("ptt_hotkey", pttHotkey);
     await store.set("whisper_model", whisperModel);
+    await store.set("native_whisper_model", nativeModel);
     await store.set("haiku_model", haikuModel);
     await store.set("input_device", inputDevice);
     await store.set("overlay_size", overlaySize);
@@ -263,8 +266,18 @@
       </div>
     </label>
     {#if engine === "native"}
+      <label>
+        Whisper model
+        <div class="row gap">
+          <select bind:value={nativeModel}>
+            <option value="tiny.en">Tiny (fastest, ~75 MB)</option>
+            <option value="base.en">Base (default, ~140 MB)</option>
+            <option value="small.en">Small (most accurate, ~460 MB)</option>
+          </select>
+        </div>
+      </label>
       <p class="hint">
-        Runs <code>whisper.cpp</code> on-device. The ~140 MB model is downloaded on first use.
+        Runs <code>whisper.cpp</code> on-device. The model is downloaded on first use.
       </p>
     {/if}
     {#if engine === "groq"}

@@ -1,19 +1,35 @@
 use anyhow::{anyhow, Result};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, Manager};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-const MODEL_URL: &str =
-    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
-const MODEL_FILENAME: &str = "ggml-base.en.bin";
-const BUNDLED_RESOURCE_PATH: &str = "models/ggml-base.en.bin";
-// Sanity check on download — model is ~140 MB.
-const MIN_MODEL_BYTES: u64 = 100 * 1024 * 1024;
+/// Minimum file sizes per model for download validation.
+fn min_model_bytes(model: &str) -> u64 {
+    match model {
+        "tiny.en" => 50 * 1024 * 1024,   // ~75 MB
+        "small.en" => 300 * 1024 * 1024,  // ~460 MB
+        _ => 100 * 1024 * 1024,           // base.en ~140 MB
+    }
+}
 
-static CTX: OnceLock<WhisperContext> = OnceLock::new();
+fn model_url(model: &str) -> String {
+    format!(
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{model}.bin"
+    )
+}
+
+fn model_filename(model: &str) -> String {
+    format!("ggml-{model}.bin")
+}
+
+fn bundled_resource_path(model: &str) -> String {
+    format!("models/ggml-{model}.bin")
+}
+
+static CTX: std::sync::LazyLock<parking_lot::Mutex<Option<(String, WhisperContext)>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(None));
 
 fn log_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
@@ -53,13 +69,13 @@ fn model_dir() -> PathBuf {
     PathBuf::from(home).join("Library/Application Support/com.charlie.hearye/models")
 }
 
-fn model_path() -> PathBuf {
-    model_dir().join(MODEL_FILENAME)
+fn model_path(model: &str) -> PathBuf {
+    model_dir().join(model_filename(model))
 }
 
-pub async fn transcribe_wav(app: AppHandle, wav: Vec<u8>) -> Result<String> {
-    let model = ensure_model_downloaded(&app).await?;
-    tauri::async_runtime::spawn_blocking(move || transcribe_blocking(&app, &model, &wav)).await?
+pub async fn transcribe_wav(app: AppHandle, model_name: String, wav: Vec<u8>) -> Result<String> {
+    let model = ensure_model_downloaded(&app, &model_name).await?;
+    tauri::async_runtime::spawn_blocking(move || transcribe_blocking(&app, &model_name, &model, &wav)).await?
 }
 
 /// Resolve the whisper model file. Tiered:
@@ -68,18 +84,20 @@ pub async fn transcribe_wav(app: AppHandle, wav: Vec<u8>) -> Result<String> {
 ///   2. Bundled resource shipped with the .app (Contents/Resources/models/)
 ///   3. One-time HTTPS download from HuggingFace (only happens in dev /
 ///      unbundled builds — packaged .app always finds tier 2 first)
-async fn ensure_model_downloaded(app: &AppHandle) -> Result<PathBuf> {
-    let override_path = model_path();
-    if model_is_valid(&override_path) {
+async fn ensure_model_downloaded(app: &AppHandle, model: &str) -> Result<PathBuf> {
+    let override_path = model_path(model);
+    let min_bytes = min_model_bytes(model);
+    if model_is_valid(&override_path, min_bytes) {
         log(format!("using override model at {}", override_path.display()));
         return Ok(override_path);
     }
 
+    let bundled = bundled_resource_path(model);
     if let Ok(bundled) = app
         .path()
-        .resolve(BUNDLED_RESOURCE_PATH, BaseDirectory::Resource)
+        .resolve(&bundled, BaseDirectory::Resource)
     {
-        if model_is_valid(&bundled) {
+        if model_is_valid(&bundled, min_bytes) {
             log(format!("using bundled model at {}", bundled.display()));
             return Ok(bundled);
         }
@@ -91,16 +109,17 @@ async fn ensure_model_downloaded(app: &AppHandle) -> Result<PathBuf> {
     ));
     let _ = app.emit("hearye://state", "downloading-model");
     std::fs::create_dir_all(model_dir())?;
+    let url = model_url(model);
     let bytes = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
+        .timeout(std::time::Duration::from_secs(600))
         .build()?
-        .get(MODEL_URL)
+        .get(&url)
         .send()
         .await?
         .error_for_status()?
         .bytes()
         .await?;
-    if (bytes.len() as u64) < MIN_MODEL_BYTES {
+    if (bytes.len() as u64) < min_bytes {
         return Err(anyhow!(
             "downloaded model is suspiciously small ({} bytes)",
             bytes.len()
@@ -115,13 +134,13 @@ async fn ensure_model_downloaded(app: &AppHandle) -> Result<PathBuf> {
     Ok(override_path)
 }
 
-fn model_is_valid(path: &Path) -> bool {
+fn model_is_valid(path: &Path, min_bytes: u64) -> bool {
     std::fs::metadata(path)
-        .map(|m| m.len() >= MIN_MODEL_BYTES)
+        .map(|m| m.len() >= min_bytes)
         .unwrap_or(false)
 }
 
-fn transcribe_blocking(app: &AppHandle, model_path: &Path, wav: &[u8]) -> Result<String> {
+fn transcribe_blocking(app: &AppHandle, model_name: &str, model_path: &Path, wav: &[u8]) -> Result<String> {
     log(format!("decoding {} wav bytes", wav.len()));
     let mut samples = wav_to_f32_mono(wav)?;
     log(format!(
@@ -140,7 +159,7 @@ fn transcribe_blocking(app: &AppHandle, model_path: &Path, wav: &[u8]) -> Result
         ));
         samples.resize(MIN_SAMPLES, 0.0);
     }
-    let ctx = get_ctx(app, model_path)?;
+    let ctx = get_ctx(app, model_name, model_path)?;
     let mut state = ctx
         .create_state()
         .map_err(|e| anyhow!("whisper create_state: {e:?}"))?;
@@ -210,20 +229,31 @@ fn clean_whisper_output(text: &str) -> String {
     buf.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn get_ctx(app: &AppHandle, model_path: &Path) -> Result<&'static WhisperContext> {
-    if let Some(ctx) = CTX.get() {
-        return Ok(ctx);
+fn get_ctx<'a>(
+    app: &AppHandle,
+    model_name: &str,
+    model_path: &Path,
+    ) -> Result<parking_lot::MappedMutexGuard<'static, WhisperContext>> {
+    let mut guard = CTX.lock();
+    // Reload if the model name changed or no model is loaded yet.
+    let needs_load = match &*guard {
+        Some((loaded, _)) => loaded != model_name,
+        None => true,
+    };
+    if needs_load {
+        let path_str = model_path
+            .to_str()
+            .ok_or_else(|| anyhow!("model path is not valid UTF-8"))?;
+        log(format!("loading whisper model '{model_name}' from {path_str}"));
+        let _ = app.emit("hearye://state", "loading-model");
+        let ctx = WhisperContext::new_with_params(path_str, WhisperContextParameters::default())
+            .map_err(|e| anyhow!("WhisperContext::new: {e:?}"))?;
+        log("whisper model loaded");
+        *guard = Some((model_name.to_string(), ctx));
     }
-    let path_str = model_path
-        .to_str()
-        .ok_or_else(|| anyhow!("model path is not valid UTF-8"))?;
-    log(format!("loading whisper model into memory from {path_str}"));
-    let _ = app.emit("hearye://state", "loading-model");
-    let ctx = WhisperContext::new_with_params(path_str, WhisperContextParameters::default())
-        .map_err(|e| anyhow!("WhisperContext::new: {e:?}"))?;
-    log("whisper model loaded");
-    let _ = CTX.set(ctx);
-    Ok(CTX.get().expect("just set"))
+    Ok(parking_lot::MutexGuard::map(guard, |opt| {
+        &mut opt.as_mut().unwrap().1
+    }))
 }
 
 fn num_threads() -> i32 {
