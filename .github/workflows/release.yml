@@ -123,24 +123,7 @@ jobs:
           SIG_AARCH64=$(cat sig-aarch64/signature-aarch64.txt)
           SIG_X64=$(cat sig-x64/signature-x64.txt)
           BASE_URL="https://github.com/csteamengine/hearye/releases/download/${TAG}"
-
-          cat > latest.json <<MANIFEST
-{
-  "version": "${VERSION}",
-  "notes": "Release ${TAG}",
-  "pub_date": "${PUB_DATE}",
-  "platforms": {
-    "darwin-aarch64": {
-      "signature": "${SIG_AARCH64}",
-      "url": "${BASE_URL}/HearYe_aarch64.app.tar.gz"
-    },
-    "darwin-x86_64": {
-      "signature": "${SIG_X64}",
-      "url": "${BASE_URL}/HearYe_x64.app.tar.gz"
-    }
-  }
-}
-MANIFEST
+          printf '{\n  "version": "%s",\n  "notes": "Release %s",\n  "pub_date": "%s",\n  "platforms": {\n    "darwin-aarch64": {\n      "signature": "%s",\n      "url": "%s/HearYe_aarch64.app.tar.gz"\n    },\n    "darwin-x86_64": {\n      "signature": "%s",\n      "url": "%s/HearYe_x64.app.tar.gz"\n    }\n  }\n}\n' "$VERSION" "$TAG" "$PUB_DATE" "$SIG_AARCH64" "$BASE_URL" "$SIG_X64" "$BASE_URL" > latest.json
 
       - name: Create GitHub Release
         env:
